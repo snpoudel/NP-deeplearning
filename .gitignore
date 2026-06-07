@@ -1,0 +1,5 @@
+# Ignore tabular exports
+*.csv
+
+# Ignore figure/image outputs
+*.png
