@@ -8,9 +8,9 @@ Note: The original codebase with additional datasets is available at office comp
 ```
 preprocessing/         # watershed delineation, ERA5 downloads, and preprocessing
 input/                 # prepared input parquet files per watershed
-shared/                # shared code: models, preprocessing, hyperparameters
+shared/                # shared code: models, dataset, hyperparameters
     ├── models.py
-    ├── preprocessing.py
+    ├── dataset.py
     └── hyperparameters.py
 output/                # model outputs (figures, models, predictions)
 01_run_lstm.py         # train, validate, and predict with LSTM
@@ -24,7 +24,7 @@ output/                # model outputs (figures, models, predictions)
 ## Description
 
 - **preprocessing/**: Delineates watersheds, downloads ERA5 inputs for each watershed, and merges inputs with observed discharge. Outputs are saved as parquet files in `input/`.
-- **shared/**: Contains common code used by all experiments: model architectures (`models.py`), data-preparation utilities (`preprocessing.py`), and global hyperparameters (`hyperparameters.py`).
+- **shared/**: Contains common code used by all experiments: model architectures (`models.py`), data-preparation utilities (`dataset.py`), and global hyperparameters (`hyperparameters.py`).
 - **output/**: Stores model artifacts, predictions, and figures.
 - **01_run_lstm.py**: Train, validate, and generate predictions using the LSTM model.
 - **02_run_transformer.py**: Train, validate, and generate predictions using the transformer model.

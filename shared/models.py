@@ -1,19 +1,7 @@
 """Model architectures for NP-deeplearning.
 
-Place LSTM, transformer, and post-processor model classes here.
+Place LSTM, transformer model classes. Note that preprocessor are same class they only predict error than observations.
+However make sure to have similar interface for both lstm, transformer so that they can be similarly integrated into training and evaluation code.
 """
 
-from typing import Any
 
-
-class BaseModel:
-    """Minimal base model placeholder."""
-
-    def __init__(self, config: dict[str, Any]):
-        self.config = config
-
-    def train(self):
-        raise NotImplementedError
-
-    def predict(self, x):
-        raise NotImplementedError
