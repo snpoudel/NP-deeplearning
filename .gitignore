@@ -3,3 +3,12 @@
 
 # Ignore figure/image outputs
 *.png
+
+# Ignore folders and files
+.venv/
+__pycache__/
+*.log
+*.h5
+rawdata/
+
+
