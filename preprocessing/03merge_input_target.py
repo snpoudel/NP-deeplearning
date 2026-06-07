@@ -5,6 +5,9 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# set working directory to the root of the project
+import os
+os.chdir("..")
 
 # read list of basins file
 basins_list = pd.read_csv('rawdata/selected_hydro_stations.csv')
@@ -26,50 +29,86 @@ static = caravan_static.copy()
 static["drainage_area_km2"] = pd.to_numeric(static["drainage_area_km2"], errors="coerce")
 static = static.set_index("gauge_id")
 
-# --- Prep qobs once ---
-qobs = qobs.copy()
-qobs["date"] = pd.to_datetime(qobs["date"])
+# Helper functions
+# ---------------------------------------------------
+def clean_id(x):
+    x = float(x)
+    return str(int(x)) if x.is_integer() else str(x)
+
+# STATIC (keep RAW for file names + CLEAN for matching)
+# ---------------------------------------------------
+static_raw_index = static.index.astype(str).str.strip()
+
+static_clean_index = static_raw_index.map(clean_id)
+static.index = static_clean_index
+
+# also keep mapping back to raw filenames
+static["raw_id"] = static_raw_index.values
+
+# QOBS
+# ---------------------------------------------------
+qobs_all = pd.read_csv("rawdata/selected_qobs.csv")
+qobs_all["date"] = pd.to_datetime(qobs_all["date"])
+
+qobs = qobs_all.melt(
+    id_vars="date",
+    var_name="gauge_id",
+    value_name="qobs"
+)
+
+qobs["gauge_id"] = qobs["gauge_id"].astype(str).str.strip().map(clean_id)
 qobs["qobs"] = pd.to_numeric(qobs["qobs"], errors="coerce")
+qobs = qobs.dropna(subset=["qobs"])
 
 qobs_groups = {
     gid: g[["date", "qobs"]]
     for gid, g in qobs.groupby("gauge_id")
 }
 
-# --- Loop over basins ---
+print("Basins with QOBS:", len(qobs_groups))
+
+# LOOP
+# ---------------------------------------------------
 for gauge_id in static.index:
 
+    # use RAW id for file path
+    raw_id = static.loc[gauge_id, "raw_id"]
+
     dynamic = pd.read_csv(
-        f"timeseries/csv/nepal/nepal_{gauge_id}.csv",
+        f"timeseries/csv/nepal/nepal_{raw_id}.csv",
         usecols=["date", "temperature_2m_mean", "total_precipitation_sum"],
         parse_dates=["date"]
     )
 
-    discharge = qobs_groups.get(gauge_id, pd.DataFrame(columns=["date", "qobs"]))
+    discharge = qobs_groups.get(
+        gauge_id,
+        pd.DataFrame(columns=["date", "qobs"])
+    )
 
     merged = dynamic.merge(discharge, on="date", how="left")
 
-    # add static features
-    merged = merged.assign(**static.loc[gauge_id].to_dict())
+    merged = merged.assign(**static.loc[gauge_id].drop("raw_id").to_dict())
 
-    # unit conversion: m³/s -> mm/day
     merged["qobs"] = (
-        merged["qobs"] * 86400
-        / (merged["drainage_area_km2"] * 1000)
+        merged["qobs"] * 86400 /
+        (merged["drainage_area_km2"] * 1000)
     )
 
-    # round numeric columns except date
     merged.iloc[:, 1:] = merged.iloc[:, 1:].round(3)
 
-    merged.to_csv(f"merged_input/nepal_{gauge_id}_merged.csv", index=False)
+    merged.to_csv(
+        f"input/csv/nepal_{gauge_id}_merged.csv",
+        index=False
+    )
 
+    print(f"{gauge_id}: done")
 
 
 # convert csv files to parquet files for faster loading
 import os
 import pandas as pd
 import pyarrow.parquet as pq
-for filename in os.listdir("merged_input/csv"):
+for filename in os.listdir("input/csv"):
     if filename.endswith(".csv"):
-        df = pd.read_csv(os.path.join("merged_input/csv", filename))
-        df.to_parquet(os.path.join("merged_input", filename.replace(".csv", ".parquet")), index=False)
+        df = pd.read_csv(os.path.join("input/csv", filename))
+        df.to_parquet(os.path.join("input", filename.replace(".csv", ".parquet")), index=False)
