@@ -18,48 +18,6 @@ caravan_static['gauge_id'] = caravan_static['gauge_id'].str.replace('nepal_', ''
 caravan_static = caravan_static.merge(basins_list[['gauge_id', 'elevation_m', 'drainage_area_km2']], on='gauge_id', how='left')
 
 
-##########################################
-# read qobs and make a plot to visualize the availability of qobs data for each gauge_id and date. This will help us understand the time period for which we have qobs data and how it overlaps with the dynamic features we have. We can use this information to decide how to handle missing qobs data when merging with the dynamic features.
-qobs_all = pd.read_csv("rawdata/selected_qobs.csv")
-qobs_all["date"] = pd.to_datetime(qobs_all["date"])
-
-qobs = qobs_all.melt(
-    id_vars="date",
-    var_name="gauge_id",
-    value_name="qobs"
-).dropna(subset=["qobs"])
-
-qobs["gauge_id"] = (
-    qobs["gauge_id"]
-    .str.replace("nepal_", "", regex=False)
-)
-
-sites = sorted(qobs["gauge_id"].unique(), key=float)
-site_map = {s: i for i, s in enumerate(sites)}
-
-plt.figure(figsize=(8, 6))
-plt.plot(
-    qobs["date"],
-    qobs["gauge_id"].map(site_map),
-    "|",
-    markersize=4
-)
-
-plt.yticks(
-    range(len(sites)),
-    [f"site_{s}" for s in sites]
-)
-
-plt.xlim(qobs_all["date"].min(), qobs_all["date"].max())
-plt.grid(True, alpha=0.3)
-plt.xlabel("Date")
-plt.ylabel("Gauge Site")
-plt.title("Observed Streamflow Availability")
-plt.tight_layout()
-plt.savefig("figures/qobs_availability.png", dpi=300)
-plt.show()
-
-
 
 ##########################################
 # save merged csv files for each gauge_id in merged_input folder. The merged csv file should have the following columns: date, temperature_2m_mean, total_precipitation_sum, qobs, and all static features from caravan_static. The qobs column should be converted from m³/s to mm/day using the formula: qobs_mm_day = (qobs_m3_s * 86400) / (drainage_area_km2 * 1000). The merged csv file should be named as nepal_{gauge_id}_merged.csv
