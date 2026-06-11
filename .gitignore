@@ -15,6 +15,5 @@ rawdata/
 # Ignore all model outputs (figures, trained models, predictions, metrics)
 output/
 
-# Ignore raw input data (physical model outputs, shapefiles)
-input/physical_model/
+# Ignore raw input data (shapefiles)
 input/shapefile/
