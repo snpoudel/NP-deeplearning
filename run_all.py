@@ -12,8 +12,11 @@ Usage:
 
 import argparse
 import importlib.util
+import sys
 import time
 from pathlib import Path
+
+sys.stdout.reconfigure(line_buffering=True)  # flush every line so tail -f works
 
 import numpy as np
 import pandas as pd
