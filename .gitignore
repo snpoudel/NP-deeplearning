@@ -6,6 +6,7 @@
 
 # Ignore folders and files
 .venv/
+venv/
 __pycache__/
 *.log
 *.h5
