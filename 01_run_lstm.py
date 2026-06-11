@@ -55,7 +55,7 @@ def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
         dict mapping gauge_id (str) to its DataFrame.
     """
     gauge_dfs = {}
-    for path in sorted(input_dir.glob("*.parquet")):
+    for path in sorted(input_dir.glob("nepal_*_merged.parquet")):
         gauge_id = re.sub(r"^nepal_|_merged\.parquet$", "", path.name)
         df = pd.read_parquet(path)
         df["date"] = pd.to_datetime(df["date"])
@@ -175,7 +175,7 @@ def main(seed: int, device: str) -> None:
 
     # Filter to training period (1980–2014) and drop rows with missing qobs
     all_df = all_df[
-        (all_df["date"] >= SPLIT_DATES["train"][0])
+        (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["test"][1])
     ]
     n_before = len(all_df)
@@ -298,7 +298,7 @@ def main(seed: int, device: str) -> None:
     for gauge_id, raw_df in gauge_dfs.items():
         # Filter to full model period and drop missing qobs
         g_df = raw_df[
-            (raw_df["date"] >= SPLIT_DATES["train"][0])
+            (raw_df["date"] >= SPLIT_DATES["val"][0])
             & (raw_df["date"] <= SPLIT_DATES["test"][1])
         ].dropna(subset=[TARGET]).reset_index(drop=True)
 

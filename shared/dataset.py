@@ -5,6 +5,8 @@ to all splits), and a PyTorch Dataset class that returns sliding-window sequence
 for any sequence model (LSTM, Transformer, post-processors).
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import joblib

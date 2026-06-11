@@ -51,7 +51,7 @@ SCALER_PATH = MODEL_DIR / "scaler.pkl"
 def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
     """Load all gauge parquet files and parse date column."""
     gauge_dfs = {}
-    for path in sorted(input_dir.glob("*.parquet")):
+    for path in sorted(input_dir.glob("nepal_*_merged.parquet")):
         gauge_id = re.sub(r"^nepal_|_merged\.parquet$", "", path.name)
         df = pd.read_parquet(path)
         df["date"] = pd.to_datetime(df["date"])
@@ -193,7 +193,7 @@ def main(seed: int, device: str) -> None:
 
     # Filter to 1980–2014, require both qobs and qglofas non-null
     all_df = all_df[
-        (all_df["date"] >= SPLIT_DATES["train"][0])
+        (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["test"][1])
     ]
     n_before = len(all_df)
@@ -331,7 +331,7 @@ def main(seed: int, device: str) -> None:
     for gauge_id, raw_df in gauge_dfs.items():
         # Filter to model period, require both qobs and qglofas
         g_df = raw_df[
-            (raw_df["date"] >= SPLIT_DATES["train"][0])
+            (raw_df["date"] >= SPLIT_DATES["val"][0])
             & (raw_df["date"] <= SPLIT_DATES["test"][1])
         ].dropna(subset=[TARGET, "qglofas"]).reset_index(drop=True)
 

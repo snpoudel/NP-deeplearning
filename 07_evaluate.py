@@ -10,6 +10,8 @@
 #   output/metrics.parquet       — per-model per-gauge metrics table
 #   output/figures/fig1_*.png    — seven figures at 300 dpi
 
+from __future__ import annotations
+
 import re
 import warnings
 from pathlib import Path
@@ -160,7 +162,7 @@ def load_training_qobs() -> dict[str, pd.Series]:
     """
     train_start, train_end = SPLIT_DATES["train"]
     result = {}
-    for path in sorted(INPUT_DIR.glob("*.parquet")):
+    for path in sorted(INPUT_DIR.glob("nepal_*_merged.parquet")):
         gauge_id = re.sub(r"^nepal_|_merged\.parquet$", "", path.name)
         df = pd.read_parquet(path)[["date", "qobs"]]
         df["date"] = pd.to_datetime(df["date"])
@@ -392,7 +394,7 @@ def fig2_obs_availability() -> None:
     test_start,  test_end  = SPLIT_DATES["test"]
 
     gauge_ids = sorted(
-        [re.sub(r"^nepal_|_merged\.parquet$", "", p.name) for p in INPUT_DIR.glob("*.parquet")],
+        [re.sub(r"^nepal_|_merged\.parquet$", "", p.name) for p in INPUT_DIR.glob("nepal_*_merged.parquet")],
         key=float,
     )
     site_map = {gid: i for i, gid in enumerate(gauge_ids)}
@@ -420,7 +422,7 @@ def fig2_obs_availability() -> None:
     proj_start = min(all_dates)
     proj_end   = max(all_dates)
 
-    for path in sorted(INPUT_DIR.glob("*.parquet")):
+    for path in sorted(INPUT_DIR.glob("nepal_*_merged.parquet")):
         gauge_id = re.sub(r"^nepal_|_merged\.parquet$", "", path.name)
         df = pd.read_parquet(path)[["date", "qobs"]]
         df["date"] = pd.to_datetime(df["date"])
