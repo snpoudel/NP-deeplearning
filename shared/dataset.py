@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.preprocessing import StandardScaler
-from torch.utils.data import Dataset
+from torch.utils.data import ConcatDataset, Dataset
 
 # ---------------------------------------------------------------------------
 # Feature definitions — imported by all run scripts
@@ -128,3 +128,15 @@ class StreamflowDataset(Dataset):
         x_seq = torch.tensor(self.X[idx : idx + self.seq_len])       # (seq_len, 18)
         target = torch.tensor([self.y[idx + self.seq_len - 1]])       # (1,)
         return x_seq, target
+
+
+def build_concat_dataset(gauge_split_dfs: dict[str, pd.DataFrame], seq_len: int) -> ConcatDataset:
+    """One StreamflowDataset per gauge, concatenated to prevent cross-gauge sequences.
+
+    Avoids ~7% of training samples that would otherwise mix two gauges' data
+    at concatenation boundaries when using a single flat DataFrame.
+    """
+    datasets = [StreamflowDataset(df, seq_len) for df in gauge_split_dfs.values() if len(df) >= seq_len]
+    if not datasets:
+        raise ValueError("No gauge has enough rows to form a sequence dataset.")
+    return ConcatDataset(datasets)

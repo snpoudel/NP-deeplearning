@@ -31,6 +31,7 @@ from shared.dataset import (
     TARGET,
     StreamflowDataset,
     apply_scaler,
+    build_concat_dataset,
     load_scaler,
 )
 from shared.hyperparameters import HYPERPARAMS, SPLIT_DATES
@@ -207,14 +208,24 @@ def main(seed: int, device: str) -> None:
     print(f"Loading scaler from {SCALER_PATH}...")
     scaler = load_scaler(SCALER_PATH)
 
-    train_scaled = apply_scaler(train_df, scaler)
-    val_scaled = apply_scaler(val_df, scaler)
+    # ------------------------------------------------------------------
+    # 4. Build per-gauge DataLoaders
+    # ------------------------------------------------------------------
+    train_per_gauge, val_per_gauge = {}, {}
+    for gauge_id, gdf in gauge_dfs.items():
+        gdf_clean = gdf[
+            (gdf["date"] >= SPLIT_DATES["val"][0]) & (gdf["date"] <= SPLIT_DATES["test"][1])
+        ].dropna(subset=[TARGET]).reset_index(drop=True)
+        gdf_scaled = apply_scaler(gdf_clean, scaler)
+        train_per_gauge[gauge_id] = gdf_scaled[
+            (gdf_scaled["date"] >= SPLIT_DATES["train"][0]) & (gdf_scaled["date"] <= SPLIT_DATES["train"][1])
+        ].reset_index(drop=True)
+        val_per_gauge[gauge_id] = gdf_scaled[
+            (gdf_scaled["date"] >= SPLIT_DATES["val"][0]) & (gdf_scaled["date"] <= SPLIT_DATES["val"][1])
+        ].reset_index(drop=True)
 
-    # ------------------------------------------------------------------
-    # 4. Build DataLoaders
-    # ------------------------------------------------------------------
-    train_ds = StreamflowDataset(train_scaled, seq_len)
-    val_ds = StreamflowDataset(val_scaled, seq_len)
+    train_ds = build_concat_dataset(train_per_gauge, seq_len)
+    val_ds = build_concat_dataset(val_per_gauge, seq_len)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
@@ -227,8 +238,8 @@ def main(seed: int, device: str) -> None:
     input_size = len(ALL_FEATURES)
     model = build_transformer_model(input_size).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=num_epochs, eta_min=lr * 0.01
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, patience=hp["lr_scheduler_patience"], factor=hp["lr_scheduler_factor"]
     )
     criterion = nn.MSELoss()
 
@@ -248,12 +259,13 @@ def main(seed: int, device: str) -> None:
     for epoch in range(1, num_epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, _device)
         val_loss = eval_epoch(model, val_loader, criterion, _device)
-        scheduler.step()
+        scheduler.step(val_loss)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
-        print(f"  Epoch {epoch:03d} | train_loss={train_loss:.4f} | val_loss={val_loss:.4f}", end="")
+        current_lr = optimizer.param_groups[0]["lr"]
+        print(f"  Epoch {epoch:03d} | train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | lr={current_lr:.2e}", end="")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss

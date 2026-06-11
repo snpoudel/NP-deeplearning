@@ -29,6 +29,7 @@ from shared.dataset import (
     TARGET,
     StreamflowDataset,
     apply_scaler,
+    build_concat_dataset,
     load_scaler,
 )
 from shared.hyperparameters import HYPERPARAMS, SPLIT_DATES
@@ -105,6 +106,7 @@ def train_epoch(
         pred = model(x)
         loss = criterion(pred, y)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item() * len(x)
     return total_loss / len(loader.dataset)
@@ -228,14 +230,25 @@ def main(seed: int, device: str) -> None:
     print(f"Loading scaler from {SCALER_PATH}...")
     scaler = load_scaler(SCALER_PATH)
 
-    train_scaled = apply_scaler(train_df, scaler)
-    val_scaled = apply_scaler(val_df, scaler)
+    # ------------------------------------------------------------------
+    # 4. Build per-gauge DataLoaders with residual target per gauge
+    # ------------------------------------------------------------------
+    train_per_gauge, val_per_gauge = {}, {}
+    for gauge_id, gdf in gauge_dfs.items():
+        gdf_clean = gdf[
+            (gdf["date"] >= SPLIT_DATES["val"][0]) & (gdf["date"] <= SPLIT_DATES["test"][1])
+        ].dropna(subset=[TARGET, "qglofas"]).copy().reset_index(drop=True)
+        gdf_clean[TARGET] = gdf_clean[TARGET] - gdf_clean["qglofas"]  # residual as target
+        gdf_scaled = apply_scaler(gdf_clean, scaler)
+        train_per_gauge[gauge_id] = gdf_scaled[
+            (gdf_scaled["date"] >= SPLIT_DATES["train"][0]) & (gdf_scaled["date"] <= SPLIT_DATES["train"][1])
+        ].reset_index(drop=True)
+        val_per_gauge[gauge_id] = gdf_scaled[
+            (gdf_scaled["date"] >= SPLIT_DATES["val"][0]) & (gdf_scaled["date"] <= SPLIT_DATES["val"][1])
+        ].reset_index(drop=True)
 
-    # ------------------------------------------------------------------
-    # 4. Build DataLoaders
-    # ------------------------------------------------------------------
-    train_ds = StreamflowDataset(train_scaled, seq_len)
-    val_ds = StreamflowDataset(val_scaled, seq_len)
+    train_ds = build_concat_dataset(train_per_gauge, seq_len)
+    val_ds = build_concat_dataset(val_per_gauge, seq_len)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
@@ -248,6 +261,9 @@ def main(seed: int, device: str) -> None:
     input_size = len(ALL_FEATURES)
     model = build_lstm_model(input_size).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, patience=hp["lr_scheduler_patience"], factor=hp["lr_scheduler_factor"]
+    )
     criterion = nn.MSELoss()
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -265,11 +281,13 @@ def main(seed: int, device: str) -> None:
     for epoch in range(1, num_epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, _device)
         val_loss = eval_epoch(model, val_loader, criterion, _device)
+        scheduler.step(val_loss)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
-        print(f"  Epoch {epoch:03d} | train_loss={train_loss:.4f} | val_loss={val_loss:.4f}", end="")
+        current_lr = optimizer.param_groups[0]["lr"]
+        print(f"  Epoch {epoch:03d} | train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | lr={current_lr:.2e}", end="")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -308,18 +326,20 @@ def main(seed: int, device: str) -> None:
     # ------------------------------------------------------------------
     model.load_state_dict(torch.load(model_path, map_location=_device))
 
-    # Compute final qsim = qglofas + predicted_residual on the val split
-    val_df_orig = all_df[
-        (all_df["date"] >= SPLIT_DATES["val"][0])
-        & (all_df["date"] <= SPLIT_DATES["val"][1])
-    ].reset_index(drop=True)
+    all_qobs_v, all_qsim_v = [], []
+    for gauge_id in sorted(val_per_gauge.keys()):
+        gdf = val_per_gauge[gauge_id]
+        if len(gdf) < seq_len:
+            continue
+        g_ds = StreamflowDataset(gdf, seq_len)
+        g_loader = DataLoader(g_ds, batch_size=batch_size, shuffle=False)
+        pred_residuals = run_inference(model, g_loader, _device)
+        phys_vals = gdf["qglofas"].iloc[seq_len - 1:].values
+        orig_qobs = gdf[TARGET].iloc[seq_len - 1:].values + phys_vals  # residual + qglofas = qobs
+        all_qobs_v.extend(orig_qobs)
+        all_qsim_v.extend(phys_vals + pred_residuals)
 
-    predicted_residuals_val = run_inference(model, val_loader, _device)
-    qglofas_val = val_df_orig["qglofas"].iloc[seq_len - 1:].values
-    qobs_val = val_df_orig["residual"].iloc[seq_len - 1:].values + qglofas_val  # recover original qobs
-    qsim_val = qglofas_val + predicted_residuals_val
-
-    metrics = compute_metrics(qobs_val, qsim_val)
+    metrics = compute_metrics(np.array(all_qobs_v), np.array(all_qsim_v))
     print(f"\nValidation metrics — final qsim (qglofas + predicted residual):")
     for k, v in metrics.items():
         print(f"  {k.upper()}: {v:.4f}")
@@ -338,9 +358,6 @@ def main(seed: int, device: str) -> None:
         # Restore original qobs (before we overwrote it with residual)
         # raw_df still has the original qobs since gauge_dfs was mutated earlier;
         # re-compute original qobs = residual + qglofas
-        g_df["qobs_orig"] = g_df[TARGET] + g_df["qglofas"]
-        g_df["residual"] = g_df[TARGET]  # TARGET column now holds residuals
-
         if len(g_df) < seq_len:
             print(f"  {gauge_id}: skipped (only {len(g_df)} rows, need ≥ {seq_len})")
             continue
@@ -351,10 +368,9 @@ def main(seed: int, device: str) -> None:
 
         predicted_residuals = run_inference(model, g_loader, _device)
 
-        # Align dates and values to the prediction window
         start = seq_len - 1
         dates = g_df["date"].iloc[start:].reset_index(drop=True)
-        qobs_out = g_df["qobs_orig"].iloc[start:].reset_index(drop=True)
+        qobs_out = g_df[TARGET].iloc[start:].reset_index(drop=True)  # original qobs
         qglofas_out = g_df["qglofas"].iloc[start:].reset_index(drop=True)
         qsim_out = qglofas_out.values + predicted_residuals
 
