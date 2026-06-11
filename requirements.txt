@@ -6,3 +6,6 @@ joblib
 geopandas
 matplotlib
 pyarrow
+tqdm
+contextily
+adjustText

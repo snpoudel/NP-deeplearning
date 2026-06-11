@@ -1,17 +1,18 @@
 # NP-deeplearning
 
-This repository implements LSTM-based deep learning models, physical models (GloFAS: Global Flood Awareness System and GRFR: Global Reach-Level Flood Reanalysis), and hybrid post-processor models that correct physical-model outputs using LSTM or transformer post-processing. Models are trained and evaluated on 15 river basins in Nepal and are compared systematically.
+Deep learning and hybrid post-processor models for streamflow prediction in 15 Nepal river basins, benchmarked against GloFAS and GRFR physical model outputs.
 
 ## Repository structure
 
 ```
-preprocessing/               # watershed delineation, ERA5 downloads, and preprocessing
+preprocessing/               # watershed delineation, ERA5 downloads, preprocessing (complete — do not modify)
 input/                       # prepared input parquet files per watershed
 shared/                      # shared code: models, dataset, hyperparameters
     ├── models.py
     ├── dataset.py
     └── hyperparameters.py
 output/                      # model outputs (figures, models, predictions) — git-ignored
+run_all.py                   # orchestrator: runs all scripts for all seeds, aggregates, evaluates
 01_run_lstm.py               # train, validate, and predict with LSTM
 02_run_transformer.py        # train, validate, and predict with transformer
 03_run_glofas_lstm.py        # LSTM post-processor for GloFAS
@@ -21,110 +22,78 @@ output/                      # model outputs (figures, models, predictions) — 
 07_evaluate.py               # evaluate all models and produce figures
 ```
 
-## Description
-
-- **preprocessing/**: Delineates watersheds, downloads ERA5 inputs for each watershed, and merges inputs with observed discharge. Outputs are saved as parquet files in `input/`. Preprocessing is already complete — do not modify this folder.
-- **shared/**: Common code used by all experiments: model architectures (`models.py`), data-preparation utilities (`dataset.py`), and global hyperparameters (`hyperparameters.py`).
-- **output/**: Stores model artifacts, predictions, and figures. This directory is git-ignored; all outputs are generated locally by running the scripts.
-- **01_run_lstm.py**: Train, validate, and generate predictions using the LSTM model.
-- **02_run_transformer.py**: Train, validate, and generate predictions using the transformer model.
-- **03_run_glofas_lstm.py**: Train/validate/predict using an LSTM post-processor that corrects GloFAS outputs.
-- **04_run_grfr_lstm.py**: Train/validate/predict using an LSTM post-processor that corrects GRFR outputs.
-- **05_run_glofas_transformer.py**: Transformer post-processor for GloFAS.
-- **06_run_grfr_transformer.py**: Transformer post-processor for GRFR.
-- **07_evaluate.py**: Compute metrics for all eight models across all basins and produce publication-quality figures.
-
 ## Setup
-
-### 1. Clone the repository
 
 ```bash
 git clone https://github.com/snpoudel/NP-deeplearning.git
 cd NP-deeplearning
-```
-
-### 2. Create and activate a virtual environment
-
-**Windows:**
-```bash
 python -m venv .venv
-.venv\Scripts\activate
-```
-
-**macOS / Linux:**
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
+# Windows: .venv\Scripts\activate  |  macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **GPU users:** The default `torch` install above is CPU-only. For GPU support, install PyTorch separately following the instructions at https://pytorch.org/get-started/locally/ before running `pip install -r requirements.txt`.
+> **GPU users:** Install PyTorch with CUDA support from https://pytorch.org/get-started/locally/ before running `pip install -r requirements.txt`.
 
 ## How to run
 
-Scripts must be run **in order**. Each script depends on outputs produced by the previous ones. Run all commands from the root of the repository with the virtual environment activated.
-
-### Step 1 — LSTM baseline
-
-Trains a global multi-basin LSTM, saves the best model and scaler, and writes per-gauge predictions to `output/predictions/lstm/`.
+### Full pipeline (recommended)
 
 ```bash
-python 01_run_lstm.py
+python run_all.py
 ```
 
-### Step 2 — Transformer baseline
-
-Trains a global multi-basin Transformer using the same scaler fitted in Step 1, and writes per-gauge predictions to `output/predictions/transformer/`.
+This runs all 6 training scripts for every seed defined in `shared/hyperparameters.py`, averages predictions and loss curves across seeds, then runs evaluation. All configuration is read from `shared/hyperparameters.py` — no command-line flags needed.
 
 ```bash
-python 02_run_transformer.py
+python run_all.py --skip-eval   # stop after aggregation, skip 07_evaluate.py
 ```
 
-### Step 3 — GloFAS + LSTM post-processor
+### Individual scripts (for debugging)
 
-Trains an LSTM that corrects GloFAS physical-model output. Reads GloFAS simulations from `input/physical_model/` and writes predictions to `output/predictions/glofas_lstm/`.
+Individual scripts can also be run standalone. Each uses `SEEDS[0]` and `DEVICE` from `shared/hyperparameters.py`.
 
-```bash
-python 03_run_glofas_lstm.py
-```
+| Script | What it does | Key output |
+|--------|--------------|------------|
+| `python 01_run_lstm.py` | LSTM baseline | `output/predictions/lstm/seed{N}/` |
+| `python 02_run_transformer.py` | Transformer baseline | `output/predictions/transformer/seed{N}/` |
+| `python 03_run_glofas_lstm.py` | LSTM post-processor for GloFAS | `output/predictions/glofas_lstm/seed{N}/` |
+| `python 04_run_grfr_lstm.py` | LSTM post-processor for GRFR | `output/predictions/grfr_lstm/seed{N}/` |
+| `python 05_run_glofas_transformer.py` | Transformer post-processor for GloFAS | `output/predictions/glofas_transformer/seed{N}/` |
+| `python 06_run_grfr_transformer.py` | Transformer post-processor for GRFR | `output/predictions/grfr_transformer/seed{N}/` |
+| `python 07_evaluate.py` | Metrics and figures | `output/figures/`, `output/metrics.parquet` |
 
-### Step 4 — GRFR + LSTM post-processor
+Scripts 02–06 require `output/model/scaler.pkl` from script 01. Run script 01 first when running individually.
 
-Same as Step 3 but for GRFR. Writes predictions to `output/predictions/grfr_lstm/`.
+## Configuration
 
-```bash
-python 04_run_grfr_lstm.py
-```
+All configuration is in [shared/hyperparameters.py](shared/hyperparameters.py). Edit this file to change behavior — no CLI flags are needed.
 
-### Step 5 — GloFAS + Transformer post-processor
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `SEEDS` | `[42]` | Random seeds for multi-seed runs. Add more seeds (e.g. `[42, 123, 456]`) for production. Predictions are averaged across seeds before evaluation. |
+| `DEVICE` | `"auto"` | `"auto"` detects CUDA at runtime. Set `"cpu"` or `"cuda"` to force a device. |
+| `HYPERPARAMS["lstm"]` | dev sizes | Architecture and training settings. Values marked `# dev size` are small for fast testing; update to the production values noted alongside before a full run. |
+| `HYPERPARAMS["transformer"]` | dev sizes | Same as LSTM but for the Transformer architecture. |
 
-Transformer-based post-processor for GloFAS. Writes predictions to `output/predictions/glofas_transformer/`.
+## Outputs
 
-```bash
-python 05_run_glofas_transformer.py
-```
+After a full pipeline run, the following are written to `output/`:
 
-### Step 6 — GRFR + Transformer post-processor
-
-Transformer-based post-processor for GRFR. Writes predictions to `output/predictions/grfr_transformer/`.
-
-```bash
-python 06_run_grfr_transformer.py
-```
-
-### Step 7 — Evaluation and figures
-
-Computes NSE, KGE, RMSE, and PBIAS for all eight models across all 15 basins and produces publication-quality figures saved to `output/figures/`.
-
-```bash
-python 07_evaluate.py
-```
-
-## Hyperparameters
-
-All hyperparameters (sequence length, batch size, hidden size, epochs, etc.) are defined in `shared/hyperparameters.py`. The repository ships with small development-sized values for fast testing. Before a production run, update the values marked with `# dev size` comments to the production values noted alongside them.
+| Path | Description |
+|------|-------------|
+| `model/scaler.pkl` | Fitted StandardScaler (deterministic, shared across seeds) |
+| `model/{model}_seed{N}_best.pt` | Best model weights for each model × seed |
+| `model/{model}_seed{N}_loss_curves.parquet` | Per-seed training and validation loss history |
+| `model/{model}_loss_curves.parquet` | Seed-averaged loss curves (used in fig8) |
+| `predictions/{model}/seed{N}/` | Per-seed raw predictions (date, qobs, qsim) |
+| `predictions/{model}/` | Seed-averaged final predictions (input to evaluate.py) |
+| `training_times.csv` | Training time, epochs run, and best val loss per model × seed |
+| `metrics.parquet` | NSE, KGE, RMSE, PBIAS per model × gauge (test period) |
+| `figures/fig1_basin_map.*` | Study basin map |
+| `figures/fig2_obs_availability.*` | Observation availability timeline |
+| `figures/fig3_timeseries.*` | Test-period time series for representative basin |
+| `figures/fig4_cdf_metrics.*` | CDF of NSE and KGE across basins |
+| `figures/fig5_bias.*` | PBIAS boxplots (overall, high, low, mid flow) |
+| `figures/fig6_peak_flow.*` | Peak flow CDF |
+| `figures/fig7_nse_maps.*` | Choropleth NSE maps for all models |
+| `figures/fig8_loss_curves.*` | Training and validation loss curves for all DL models |

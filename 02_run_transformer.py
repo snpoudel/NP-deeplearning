@@ -13,10 +13,11 @@
 
 # After training:
 # * run inference with best model on complete dataset sequentially (all train/val/test sets)
-# * save per-gauge parquet files to `output/predictions/transformer/`
+# * save per-gauge parquet files to `output/predictions/transformer/seed{seed}/`
 # Output columns: `date, qobs, qsim`
 
 import re
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +33,7 @@ from shared.dataset import (
     apply_scaler,
     load_scaler,
 )
-from shared.hyperparameters import HYPERPARAMS, RANDOM_SEED, SPLIT_DATES
+from shared.hyperparameters import HYPERPARAMS, SPLIT_DATES
 from shared.models import build_transformer_model, kge, nse, rmse
 
 # ---------------------------------------------------------------------------
@@ -41,9 +42,7 @@ from shared.models import build_transformer_model, kge, nse, rmse
 
 INPUT_DIR = Path("input")
 MODEL_DIR = Path("output/model")
-PRED_DIR = Path("output/predictions/transformer")
 SCALER_PATH = MODEL_DIR / "scaler.pkl"
-MODEL_PATH = MODEL_DIR / "transformer_best.pt"
 
 
 # ---------------------------------------------------------------------------
@@ -140,12 +139,12 @@ def compute_metrics(qobs_arr: np.ndarray, qsim_arr: np.ndarray) -> dict[str, flo
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    torch.manual_seed(RANDOM_SEED)
-    np.random.seed(RANDOM_SEED)
+def main(seed: int, device: str) -> None:
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    _device = torch.device(device)
+    print(f"Using device: {_device} | seed: {seed}")
 
     hp = HYPERPARAMS["transformer"]
     seq_len = hp["seq_len"]
@@ -154,7 +153,10 @@ def main() -> None:
     patience = hp["early_stopping_patience"]
     lr = hp["learning_rate"]
 
-    PRED_DIR.mkdir(parents=True, exist_ok=True)
+    # Seed-specific output paths
+    model_path = MODEL_DIR / f"transformer_seed{seed}_best.pt"
+    pred_dir = Path("output/predictions/transformer") / f"seed{seed}"
+    pred_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # 1. Load data
@@ -222,7 +224,7 @@ def main() -> None:
     # 5. Build model, optimizer, loss
     # ------------------------------------------------------------------
     input_size = len(ALL_FEATURES)
-    model = build_transformer_model(input_size).to(device)
+    model = build_transformer_model(input_size).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
@@ -234,13 +236,14 @@ def main() -> None:
     # 6. Training loop
     # ------------------------------------------------------------------
     print("Training...")
+    train_start_time = time.time()
     best_val_loss = float("inf")
     patience_counter = 0
     train_losses, val_losses = [], []
 
     for epoch in range(1, num_epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss = eval_epoch(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, _device)
+        val_loss = eval_epoch(model, val_loader, criterion, _device)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -250,7 +253,7 @@ def main() -> None:
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            torch.save(model.state_dict(), MODEL_PATH)
+            torch.save(model.state_dict(), model_path)
             print(" *")  # mark best epoch
         else:
             patience_counter += 1
@@ -259,20 +262,31 @@ def main() -> None:
                 print(f"  Early stopping at epoch {epoch} (patience={patience})")
                 break
 
-    print(f"\nBest val loss: {best_val_loss:.4f} — model saved to {MODEL_PATH}")
+    train_time = time.time() - train_start_time
+    print(f"\nBest val loss: {best_val_loss:.4f} — model saved to {model_path}")
+    print(f"Training time: {train_time:.1f}s")
 
-    # Save loss curves as parquet for later plotting
+    # Save per-seed loss curves and mirror to flat path for standalone compatibility
     loss_df = pd.DataFrame({"epoch": range(1, len(train_losses) + 1),
                             "train_loss": train_losses, "val_loss": val_losses})
-    loss_path = MODEL_DIR / "transformer_loss_curves.parquet"
+    loss_path = MODEL_DIR / f"transformer_seed{seed}_loss_curves.parquet"
     loss_df.to_parquet(loss_path, index=False)
+    loss_df.to_parquet(MODEL_DIR / "transformer_loss_curves.parquet", index=False)
     print(f"Loss curves saved to {loss_path}")
+
+    # Log training time to shared CSV (append mode)
+    timing_path = Path("output/training_times.csv")
+    timing_row = pd.DataFrame([{
+        "model": "transformer", "seed": seed, "epochs_run": len(train_losses),
+        "best_val_loss": round(best_val_loss, 6), "train_time_seconds": round(train_time, 2),
+    }])
+    timing_row.to_csv(timing_path, mode="a", index=False, header=not timing_path.exists())
 
     # ------------------------------------------------------------------
     # 7. Reload best model and report validation metrics
     # ------------------------------------------------------------------
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-    qsim_val, qobs_val = run_inference(model, val_loader, device)
+    model.load_state_dict(torch.load(model_path, map_location=_device))
+    qsim_val, qobs_val = run_inference(model, val_loader, _device)
     metrics = compute_metrics(qobs_val, qsim_val)
     print(f"\nValidation metrics (best model):")
     for k, v in metrics.items():
@@ -297,18 +311,25 @@ def main() -> None:
         g_ds = StreamflowDataset(g_scaled, seq_len)
         g_loader = DataLoader(g_ds, batch_size=batch_size, shuffle=False)
 
-        qsim_g, qobs_g = run_inference(model, g_loader, device)
+        qsim_g, qobs_g = run_inference(model, g_loader, _device)
 
         # Align dates: first prediction corresponds to row index (seq_len - 1)
         dates = g_df["date"].iloc[seq_len - 1:].reset_index(drop=True)
 
         out_df = pd.DataFrame({"date": dates, "qobs": qobs_g, "qsim": qsim_g})
-        out_path = PRED_DIR / f"nepal_{gauge_id}_transformer.parquet"
+        out_path = pred_dir / f"nepal_{gauge_id}_transformer.parquet"
         out_df.to_parquet(out_path, index=False)
+        out_df.to_parquet(pred_dir.parent / f"nepal_{gauge_id}_transformer.parquet", index=False)
         print(f"  {gauge_id}: {len(out_df)} rows -> {out_path}")
 
     print("\nDone.")
 
 
 if __name__ == "__main__":
-    main()
+    from shared.hyperparameters import DEVICE, SEEDS
+
+    _seed = SEEDS[0]
+    _device_str = "cuda" if (DEVICE == "auto" and torch.cuda.is_available()) else (
+        DEVICE if DEVICE != "auto" else "cpu"
+    )
+    main(seed=_seed, device=_device_str)

@@ -785,6 +785,59 @@ def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> Non
 
 
 # ---------------------------------------------------------------------------
+# Figure 8 — Training and validation loss curves
+# ---------------------------------------------------------------------------
+
+def fig8_loss_curves() -> None:
+    """Plot epoch vs MSE loss (train and val) for all 6 deep learning models.
+
+    Reads the seed-averaged loss curves written by run_all.py (or per-seed
+    curves if a model was run standalone). Saves fig8_loss_curves.png/.svg.
+    """
+    _MODEL_DIR = Path("output/model")
+    dl_models = [
+        "lstm", "transformer",
+        "glofas_lstm", "grfr_lstm",
+        "glofas_transformer", "grfr_transformer",
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(10, 6))
+    axes_flat = axes.flatten()
+
+    for i, model_name in enumerate(dl_models):
+        ax = axes_flat[i]
+        loss_path = _MODEL_DIR / f"{model_name}_loss_curves.parquet"
+
+        if not loss_path.exists():
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=FONT_SIZE, color="gray")
+            ax.set_title(MODEL_LABELS[model_name], fontsize=TITLE_SIZE)
+            ax.set_xlabel("Epoch", fontsize=FONT_SIZE)
+            ax.set_ylabel("MSE Loss", fontsize=FONT_SIZE)
+            continue
+
+        df = pd.read_parquet(loss_path)
+        ax.plot(df["epoch"], df["train_loss"],
+                color=COLORS[model_name], linestyle="-", linewidth=1.2, label="Train")
+        ax.plot(df["epoch"], df["val_loss"],
+                color=COLORS[model_name], linestyle="--", linewidth=1.2,
+                alpha=0.7, label="Validation")
+
+        ax.set_title(MODEL_LABELS[model_name], fontsize=TITLE_SIZE)
+        ax.set_xlabel("Epoch", fontsize=FONT_SIZE)
+        ax.set_ylabel("MSE Loss", fontsize=FONT_SIZE)
+        ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+        ax.legend(fontsize=FONT_SIZE - 1, frameon=False)
+
+    fig.suptitle("Training and Validation Loss Curves", fontsize=TITLE_SIZE + 1)
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "fig8_loss_curves.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig8_loss_curves.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig8_loss_curves.png")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -821,6 +874,7 @@ def main() -> None:
     fig5_bias(metrics_df)
     fig6_peak_flow(preds)
     fig7_nse_maps(metrics_df, basins_gdf)
+    fig8_loss_curves()
 
     print(f"\nAll figures saved to {FIGURES_DIR}/")
 
