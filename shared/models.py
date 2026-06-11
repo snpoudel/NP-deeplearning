@@ -40,6 +40,7 @@ class LSTMModel(nn.Module):
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
+        self.dropout = nn.Dropout(p=dropout)
         self.fc = nn.Linear(hidden_size, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -51,8 +52,8 @@ class LSTMModel(nn.Module):
         Returns:
             Predictions of shape (batch, 1).
         """
-        out, _ = self.lstm(x)           # (batch, seq_len, hidden_size)
-        return self.fc(out[:, -1, :])   # (batch, 1) — last timestep only
+        out, _ = self.lstm(x)                    # (batch, seq_len, hidden_size)
+        return self.fc(self.dropout(out[:, -1, :]))  # (batch, 1) — last timestep only
 
 
 def build_lstm_model(input_size: int) -> LSTMModel:
@@ -113,6 +114,7 @@ class TransformerModel(nn.Module):
                  num_encoder_layers: int, dim_feedforward: int, dropout: float = 0.1) -> None:
         super().__init__()
         self.input_proj = nn.Linear(input_size, d_model)
+        self.input_norm = nn.LayerNorm(d_model)
         self.pos_encoding = PositionalEncoding(d_model, dropout)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -134,6 +136,7 @@ class TransformerModel(nn.Module):
             Predictions of shape (batch, 1).
         """
         x = self.input_proj(x)        # (batch, seq_len, d_model)
+        x = self.input_norm(x)        # normalize before positional encoding
         x = self.pos_encoding(x)      # (batch, seq_len, d_model)
         x = self.encoder(x)           # (batch, seq_len, d_model)
         return self.fc(x[:, -1, :])   # (batch, 1) — last timestep only

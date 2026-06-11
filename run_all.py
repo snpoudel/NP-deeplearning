@@ -98,7 +98,7 @@ def aggregate_predictions(seeds: list[int]) -> None:
                 )
                 merged["qsim"] = qsim_stack.mean(axis=0)
 
-            out_path = model_pred_dir / gauge_file.name
+            out_path = model_pred_dir / gauge_file.name.replace(".parquet", "_mean.parquet")
             merged.to_parquet(out_path, index=False)
 
         print(f"  {model_name}: {len(gauge_files)} gauges aggregated")

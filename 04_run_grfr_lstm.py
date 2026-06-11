@@ -196,7 +196,7 @@ def main(seed: int, device: str) -> None:
     # ------------------------------------------------------------------
     # 2. Split by date
     # ------------------------------------------------------------------
-    train_df = all_df[all_df["date"] <= SPLIT_DATES["train"][1]].reset_index(drop=True)
+    train_df = all_df[(all_df["date"] >= SPLIT_DATES["train"][0]) & (all_df["date"] <= SPLIT_DATES["train"][1])].reset_index(drop=True)
     val_df = all_df[
         (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["val"][1])
@@ -343,7 +343,7 @@ def main(seed: int, device: str) -> None:
         })
         out_path = pred_dir / f"nepal_{gauge_id}_grfr_lstm.parquet"
         out_df.to_parquet(out_path, index=False)
-        out_df.to_parquet(pred_dir.parent / f"nepal_{gauge_id}_grfr_lstm.parquet", index=False)
+        out_df.to_parquet(pred_dir.parent / f"nepal_{gauge_id}_grfr_lstm_mean.parquet", index=False)
         print(f"  {gauge_id}: {len(out_df)} rows -> {out_path}")
 
     print("\nDone.")

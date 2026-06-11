@@ -120,7 +120,7 @@ def load_all_predictions() -> dict[str, dict[str, pd.DataFrame]]:
     }
     for model_name, (folder, sim_col) in dl_models.items():
         gauge_dict = {}
-        for path in sorted((PRED_DIR / folder).glob("*.parquet")):
+        for path in sorted((PRED_DIR / folder).glob("*_mean.parquet")):
             gauge_id = _gauge_id_from_filename(path)
             df = pd.read_parquet(path)
             df["date"] = pd.to_datetime(df["date"])

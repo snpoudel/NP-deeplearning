@@ -95,6 +95,7 @@ def train_epoch(
         pred = model(x)
         loss = criterion(pred, y)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item() * len(x)
     return total_loss / len(loader.dataset)
@@ -192,7 +193,7 @@ def main(seed: int, device: str) -> None:
     # ------------------------------------------------------------------
     # 2. Split by date
     # ------------------------------------------------------------------
-    train_df = all_df[all_df["date"] <= SPLIT_DATES["train"][1]].reset_index(drop=True)
+    train_df = all_df[(all_df["date"] >= SPLIT_DATES["train"][0]) & (all_df["date"] <= SPLIT_DATES["train"][1])].reset_index(drop=True)
     val_df = all_df[
         (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["val"][1])
@@ -227,6 +228,9 @@ def main(seed: int, device: str) -> None:
     input_size = len(ALL_FEATURES)
     model = build_transformer_model(input_size).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=num_epochs, eta_min=lr * 0.01
+    )
     criterion = nn.MSELoss()
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -244,6 +248,7 @@ def main(seed: int, device: str) -> None:
     for epoch in range(1, num_epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, _device)
         val_loss = eval_epoch(model, val_loader, criterion, _device)
+        scheduler.step()
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -339,7 +344,7 @@ def main(seed: int, device: str) -> None:
         })
         out_path = pred_dir / f"nepal_{gauge_id}_glofas_transformer.parquet"
         out_df.to_parquet(out_path, index=False)
-        out_df.to_parquet(pred_dir.parent / f"nepal_{gauge_id}_glofas_transformer.parquet", index=False)
+        out_df.to_parquet(pred_dir.parent / f"nepal_{gauge_id}_glofas_transformer_mean.parquet", index=False)
         print(f"  {gauge_id}: {len(out_df)} rows -> {out_path}")
 
     print("\nDone.")
