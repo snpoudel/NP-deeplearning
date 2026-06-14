@@ -14,7 +14,7 @@ Evaluate the performance of deep learning models (LSTM, Transformer) against glo
 | Pure DL | LSTM, Transformer | Predict streamflow directly from 66 input features |
 | Hybrid post-processor | GloFAS+LSTM, GloFAS+Transformer, GRFR+LSTM, GRFR+Transformer | Predict `residual = qobs − q_physical`; final `qsim = q_physical + residual` |
 
-All DL models share the same architecture, hyperparameters, and 66-feature input. Only the prediction target differs (streamflow vs. residual).
+DL models and post-processors share the same architecture, hyperparameters, and 66-feature input. Only the prediction target differs (streamflow vs. residual).
 
 ## Input features (66 total)
 
