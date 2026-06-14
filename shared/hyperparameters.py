@@ -3,8 +3,12 @@
 # global hyperparameters: random seed, train/val/test split dates, and evaluation metrics
 RANDOM_SEED = 42
 
-# Seeds for multi-seed training (extend to e.g. [42, 123, 456] for production runs)
-SEEDS = [42, 123, 456]
+# Dev uses a single seed for fast smoke-testing; production uses all three.
+DEV_SEEDS  = [42]
+PROD_SEEDS = [42, 123, 456]
+
+# Backward-compatible alias (resolves to production seeds)
+SEEDS = PROD_SEEDS
 
 # Device selection: "auto" detects CUDA at runtime, or set "cpu" / "cuda" explicitly
 DEVICE = "auto"

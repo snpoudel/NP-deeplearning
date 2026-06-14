@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from shared.hyperparameters import DEVICE, SEEDS
+from shared.hyperparameters import DEVICE, DEV_SEEDS, PROD_SEEDS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,14 +170,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    seeds = DEV_SEEDS if args.mode == "dev" else PROD_SEEDS
+
     device = _resolve_device(DEVICE)
     print(f"{'='*60}")
     print(f"NP-deeplearning — full pipeline")
     print(f"  Device : {device}")
-    print(f"  Seeds  : {SEEDS}")
+    print(f"  Seeds  : {seeds}")
     print(f"  Mode   : {args.mode}")
-    print(f"  Runs   : {len(SEEDS)} seed(s) × {len(SCRIPT_ORDER)} models = "
-          f"{len(SEEDS) * len(SCRIPT_ORDER)} total")
+    print(f"  Runs   : {len(seeds)} seed(s) × {len(SCRIPT_ORDER)} models = "
+          f"{len(seeds) * len(SCRIPT_ORDER)} total")
     print(f"{'='*60}\n")
 
     # Load each training script once (exec_module runs module-level code once)
@@ -196,7 +198,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     pipeline_start = time.time()
 
-    for seed in SEEDS:
+    for seed in seeds:
         print(f"\n{'='*60}")
         print(f"Seed {seed}")
         print(f"{'='*60}")
@@ -211,8 +213,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Aggregate predictions and loss curves across seeds
     # ------------------------------------------------------------------
-    aggregate_predictions(SEEDS)
-    aggregate_loss_curves(SEEDS)
+    aggregate_predictions(seeds)
+    aggregate_loss_curves(seeds)
 
     # ------------------------------------------------------------------
     # Evaluation
