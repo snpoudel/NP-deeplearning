@@ -154,7 +154,7 @@ class StreamflowDataset(Dataset):
     """Sliding-window sequence dataset for streamflow prediction.
 
     Each sample is a window of seq_len consecutive time steps. The model input
-    is the feature matrix for those steps (shape: seq_len × 18) and the target
+    is the feature matrix for those steps (shape: seq_len × 66) and the target
     is the qobs value at the last step of the window.
 
     Static basin attributes are already constant per basin in the DataFrame, so
@@ -181,7 +181,7 @@ class StreamflowDataset(Dataset):
         return len(self.X) - self.seq_len + 1
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        x_seq = torch.tensor(self.X[idx : idx + self.seq_len])       # (seq_len, 18)
+        x_seq = torch.tensor(self.X[idx : idx + self.seq_len])       # (seq_len, 66)
         target = torch.tensor([self.y[idx + self.seq_len - 1]])       # (1,)
         return x_seq, target
 

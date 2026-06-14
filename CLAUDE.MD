@@ -11,7 +11,7 @@ shared/
     ├── models.py            # LSTMModel, TransformerModel, metrics (nse/kge/rmse/pbias)
     ├── dataset.py           # feature defs, scaler helpers, StreamflowDataset, attach_alphaearth
     └── hyperparameters.py   # seeds, splits, dev/production hyperparameter profiles
-experiment_ae/               # completed input ablation experiment (AlphaEarth vs static vs dynamic)
+experiment_ae/               # Input ablation experiment (AlphaEarth vs static vs dynamic)
 output/                      # model weights, predictions, figures, metrics
 run_all.py                   # orchestrator: train → aggregate → evaluate
 01_run_lstm.py               # pure LSTM
@@ -44,20 +44,6 @@ python run_all.py --mode production  # full run: seeds=[42,123,456,789,2024], 10
 ```
 
 Trains all 6 models × N seeds → averages predictions and loss curves across seeds → runs `07_evaluate.py`. Pass `--skip-eval` to stop before evaluation. Individual scripts can be run standalone for debugging.
-
-## Configuration — shared/hyperparameters.py
-
-| Setting | Dev | Production |
-|---------|-----|------------|
-| Seeds | `[42]` | `[42, 123, 456, 789, 2024]` |
-| hidden_size / d_model | 8 / 8 | 256 / 128 |
-| seq_len | 3 | 365 |
-| num_epochs | 5 | 100 |
-| early_stopping_patience | 2 | 10 |
-
-- `DEVICE = "auto"` detects CUDA; override with `"cpu"` or `"cuda"`
-- `get_hyperparams(mode)` returns the correct dict for `"dev"` or `"production"`
-- `HYPERPARAMS` and `SEEDS` are backward-compatible aliases for the production values
 
 ## Model logic
 
@@ -93,4 +79,4 @@ output/
 - Scripts 02–06 assert `scaler.pkl` exists before running. Always run script 01 first, or use `run_all.py`.
 - The scaler is shared across all models and seeds (StandardScaler is deterministic — no randomness).
 - Write clean, minimal, maintainable code with clear structure and helpful comments.
-- Ask explicitly if anything is unclear before proceeding.
+- Ask explicitly, if anything is unclear before proceeding, don't make any assumptions.
