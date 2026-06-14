@@ -4,7 +4,7 @@ Deep learning and hybrid models for streamflow prediction in **15 Nepal river ba
 
 ## Project goal
 
-Evaluate whether deep learning models (LSTM, Transformer) and hybrid post-processors that correct physical model residuals can outperform GloFAS and GRFR on streamflow prediction. Models are trained on ERA5-Land climate forcing and Google AlphaEarth satellite embeddings, evaluated on NSE, KGE, RMSE, and PBIAS over a held-out 2005–2014 test period.
+Evaluate the performance of deep learning models (LSTM, Transformer) against global physical models (GloFAS, GRFR) and hybrid post-processors that correct physical model residuals. Physical model streamflow products are publicly available; the remaining models are trained on ERA5-Land climate forcing (precipitation and temperature) and Google AlphaEarth satellite embeddings (64 aggregated features), and evaluated on NSE, KGE, RMSE, and PBIAS over a held-out test period.
 
 ## Models
 
@@ -19,8 +19,8 @@ All DL models share the same architecture, hyperparameters, and 66-feature input
 ## Input features (66 total)
 
 - **2 dynamic** (daily, ERA5-Land): `temperature_2m_mean`, `total_precipitation_sum`
-- **64 static** (per basin): Google AlphaEarth Foundations satellite embeddings (`emb_0`…`emb_63`, CC-BY 4.0)
-  — selected over hand-crafted static attributes via input ablation experiment (`experiment_ae/`)
+- **64 static** (per basin): Google AlphaEarth Foundations satellite embeddings (`emb_0`…`emb_63`)
+  — selected via an input ablation experiment comparing dynamic-only vs. dynamic + basin attributes vs. dynamic + AlphaEarth (`experiment_ae/`)
 
 ## Data splits
 
@@ -64,14 +64,12 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> **GPU:** Install PyTorch with CUDA support from https://pytorch.org before running `pip install -r requirements.txt`.
-
 ## How to run
 
-### Recommended: full pipeline
+### Full pipeline
 
 ```bash
-python run_all.py --mode dev         # smoke-test: 1 seed, small model, 5 epochs (~8 min on GPU)
+python run_all.py --mode dev         # smoke-test: 1 seed, small model, 5 epochs (~8 min on Tesla T4 GPU)
 python run_all.py --mode production  # full run: 5 seeds, production model, up to 100 epochs
 python run_all.py --mode production --skip-eval  # train + aggregate only, skip evaluation
 ```
@@ -86,20 +84,6 @@ Scripts can be run standalone with `--mode dev|production`. Scripts 02–06 requ
 python 01_run_lstm.py --mode dev
 python 07_evaluate.py
 ```
-
-## Configuration — shared/hyperparameters.py
-
-| Setting | Dev | Production |
-|---------|-----|------------|
-| Seeds | `[42]` | `[42, 123, 456, 789, 2024]` |
-| `hidden_size` (LSTM) | 8 | 256 |
-| `d_model` (Transformer) | 8 | 128 |
-| `seq_len` | 3 | 365 days |
-| `num_epochs` | 5 | 100 |
-| `early_stopping_patience` | 2 | 10 |
-| `DEVICE` | `"auto"` (detects CUDA) | same |
-
-`get_hyperparams(mode)` returns the correct profile. `build_lstm_model(input_size, mode)` and `build_transformer_model(input_size, mode)` use it to set architecture size.
 
 ## Output structure
 
@@ -117,10 +101,3 @@ output/
 ├── metrics.parquet      # NSE/KGE/RMSE/PBIAS per model per gauge (test period only)
 └── figures/             # fig1–fig9 PNG + SVG at 300 DPI
 ```
-
-## Key design decisions
-
-- **Scaler sharing**: fitted once in script 01 on the 1990–2004 training split; deterministic, safely reused by scripts 02–06 across all seeds and models.
-- **No data leakage**: scaler never sees val or test data; per-gauge sequences never cross gauge boundaries (`build_concat_dataset`).
-- **AlphaEarth embeddings**: 64-dim satellite embeddings sampled at basin centroids (2017–2024 average, ~1280 m resolution); de-quantized from int8 via `((x / 127.5)²) × sign(x)`.
-- **Multi-seed aggregation**: only `qsim` is averaged across seeds date-by-date; `qobs` and physical model columns are deterministic and taken from the first seed.
