@@ -164,6 +164,10 @@ def main() -> None:
         "--skip-eval", action="store_true",
         help="Skip 07_evaluate.py after aggregation"
     )
+    parser.add_argument(
+        "--mode", choices=["dev", "production"], default="dev",
+        help="Hyperparameter profile: 'dev' (default, fast smoke-test) or 'production' (full run)",
+    )
     args = parser.parse_args()
 
     device = _resolve_device(DEVICE)
@@ -171,6 +175,7 @@ def main() -> None:
     print(f"NP-deeplearning — full pipeline")
     print(f"  Device : {device}")
     print(f"  Seeds  : {SEEDS}")
+    print(f"  Mode   : {args.mode}")
     print(f"  Runs   : {len(SEEDS)} seed(s) × {len(SCRIPT_ORDER)} models = "
           f"{len(SEEDS) * len(SCRIPT_ORDER)} total")
     print(f"{'='*60}\n")
@@ -197,7 +202,7 @@ def main() -> None:
         print(f"{'='*60}")
         for path, label in SCRIPT_ORDER:
             print(f"\n--- {label} | seed={seed} ---")
-            scripts[path].main(seed=seed, device=device)
+            scripts[path].main(seed=seed, device=device, mode=args.mode)
 
     print(f"\n{'='*60}")
     print(f"All training complete in {(time.time() - pipeline_start) / 60:.1f} min")
