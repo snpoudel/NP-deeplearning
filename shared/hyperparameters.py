@@ -79,6 +79,10 @@ PROD_HYPERPARAMS = {
 }
 
 
+# Backward-compatible alias — existing scripts import HYPERPARAMS directly
+HYPERPARAMS = PROD_HYPERPARAMS
+
+
 def get_hyperparams(mode: str = "dev") -> dict:
     """Return the hyperparameter dict for the given mode.
 

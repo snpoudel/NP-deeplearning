@@ -52,14 +52,19 @@ ALL_FEATURES = DYNAMIC_FEATURES + STATIC_FEATURES  # 18 input features total
 # Scaler helpers
 # ---------------------------------------------------------------------------
 
-def fit_and_save_scaler(train_df: pd.DataFrame, scaler_path: str | Path) -> StandardScaler:
-    """Fit a StandardScaler on ALL_FEATURES of the training split and save it.
+def fit_and_save_scaler(
+    train_df: pd.DataFrame,
+    scaler_path: str | Path,
+    feature_cols: list[str] = ALL_FEATURES,
+) -> StandardScaler:
+    """Fit a StandardScaler on feature_cols of the training split and save it.
 
-    Only dynamic and static features are standardized; the target (qobs) is not.
+    Only the specified features are standardized; the target (qobs) is not.
 
     Args:
-        train_df: Training-split DataFrame (must contain all columns in ALL_FEATURES).
+        train_df: Training-split DataFrame (must contain all columns in feature_cols).
         scaler_path: Path where the fitted scaler will be saved (e.g. output/model/scaler.pkl).
+        feature_cols: Feature columns to fit on. Defaults to ALL_FEATURES (18 cols).
 
     Returns:
         The fitted StandardScaler instance.
@@ -68,7 +73,7 @@ def fit_and_save_scaler(train_df: pd.DataFrame, scaler_path: str | Path) -> Stan
     scaler_path.parent.mkdir(parents=True, exist_ok=True)
 
     scaler = StandardScaler()
-    scaler.fit(train_df[ALL_FEATURES].values)
+    scaler.fit(train_df[feature_cols].values)
     joblib.dump(scaler, scaler_path)
     return scaler
 
@@ -78,20 +83,25 @@ def load_scaler(scaler_path: str | Path) -> StandardScaler:
     return joblib.load(scaler_path)
 
 
-def apply_scaler(df: pd.DataFrame, scaler: StandardScaler) -> pd.DataFrame:
-    """Return a copy of df with ALL_FEATURES standardized using a fitted scaler.
+def apply_scaler(
+    df: pd.DataFrame,
+    scaler: StandardScaler,
+    feature_cols: list[str] = ALL_FEATURES,
+) -> pd.DataFrame:
+    """Return a copy of df with feature_cols standardized using a fitted scaler.
 
     The date and qobs columns are left untouched.
 
     Args:
-        df: DataFrame containing ALL_FEATURES columns.
+        df: DataFrame containing feature_cols columns.
         scaler: A fitted StandardScaler (from fit_and_save_scaler or load_scaler).
+        feature_cols: Feature columns to transform. Defaults to ALL_FEATURES (18 cols).
 
     Returns:
         New DataFrame with standardized feature columns.
     """
     df = df.copy()
-    df[ALL_FEATURES] = scaler.transform(df[ALL_FEATURES].values)
+    df[feature_cols] = scaler.transform(df[feature_cols].values)
     return df
 
 
@@ -116,10 +126,15 @@ class StreamflowDataset(Dataset):
         seq_len: Number of consecutive days per input sequence.
     """
 
-    def __init__(self, df: pd.DataFrame, seq_len: int) -> None:
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        seq_len: int,
+        feature_cols: list[str] = ALL_FEATURES,
+    ) -> None:
         self.seq_len = seq_len
-        self.X = df[ALL_FEATURES].to_numpy(dtype=np.float32)  # (N, 18)
-        self.y = df[TARGET].to_numpy(dtype=np.float32)        # (N,)
+        self.X = df[feature_cols].to_numpy(dtype=np.float32)
+        self.y = df[TARGET].to_numpy(dtype=np.float32)
 
     def __len__(self) -> int:
         return len(self.X) - self.seq_len + 1
@@ -130,13 +145,21 @@ class StreamflowDataset(Dataset):
         return x_seq, target
 
 
-def build_concat_dataset(gauge_split_dfs: dict[str, pd.DataFrame], seq_len: int) -> ConcatDataset:
+def build_concat_dataset(
+    gauge_split_dfs: dict[str, pd.DataFrame],
+    seq_len: int,
+    feature_cols: list[str] = ALL_FEATURES,
+) -> ConcatDataset:
     """One StreamflowDataset per gauge, concatenated to prevent cross-gauge sequences.
 
     Avoids ~7% of training samples that would otherwise mix two gauges' data
     at concatenation boundaries when using a single flat DataFrame.
     """
-    datasets = [StreamflowDataset(df, seq_len) for df in gauge_split_dfs.values() if len(df) >= seq_len]
+    datasets = [
+        StreamflowDataset(df, seq_len, feature_cols)
+        for df in gauge_split_dfs.values()
+        if len(df) >= seq_len
+    ]
     if not datasets:
         raise ValueError("No gauge has enough rows to form a sequence dataset.")
     return ConcatDataset(datasets)
