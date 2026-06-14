@@ -157,6 +157,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     lr = hp["learning_rate"]
 
     # Seed-specific output paths
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODEL_DIR / f"transformer_seed{seed}_best.pt"
     pred_dir = Path("output/predictions/transformer") / f"seed{seed}"
     pred_dir.mkdir(parents=True, exist_ok=True)
@@ -238,7 +239,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     # 5. Build model, optimizer, loss
     # ------------------------------------------------------------------
     input_size = len(ALL_FEATURES)
-    model = build_transformer_model(input_size).to(_device)
+    model = build_transformer_model(input_size, mode=mode).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=hp["lr_scheduler_patience"], factor=hp["lr_scheduler_factor"]

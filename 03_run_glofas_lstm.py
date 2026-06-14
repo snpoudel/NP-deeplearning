@@ -173,6 +173,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     lr = hp["learning_rate"]
 
     # Seed-specific output paths
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODEL_DIR / f"glofas_lstm_seed{seed}_best.pt"
     pred_dir = Path("output/predictions/glofas_lstm") / f"seed{seed}"
     pred_dir.mkdir(parents=True, exist_ok=True)
@@ -261,7 +262,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     # 5. Build model, optimizer, loss
     # ------------------------------------------------------------------
     input_size = len(ALL_FEATURES)
-    model = build_lstm_model(input_size).to(_device)
+    model = build_lstm_model(input_size, mode=mode).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=hp["lr_scheduler_patience"], factor=hp["lr_scheduler_factor"]
@@ -357,9 +358,8 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
             & (raw_df["date"] <= SPLIT_DATES["test"][1])
         ].dropna(subset=[TARGET, "qglofas"]).reset_index(drop=True)
 
-        # Restore original qobs (before we overwrote it with residual)
-        # raw_df still has the original qobs since gauge_dfs was mutated earlier;
-        # re-compute original qobs = residual + qglofas
+        # g_df uses original qobs from gauge_dfs (never mutated);
+        # the residual target was only set on per-gauge copies inside the training block
         if len(g_df) < seq_len:
             print(f"  {gauge_id}: skipped (only {len(g_df)} rows, need ≥ {seq_len})")
             continue

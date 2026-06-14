@@ -72,7 +72,7 @@ def fit_and_save_scaler(
     Args:
         train_df: Training-split DataFrame (must contain all columns in feature_cols).
         scaler_path: Path where the fitted scaler will be saved (e.g. output/model/scaler.pkl).
-        feature_cols: Feature columns to fit on. Defaults to ALL_FEATURES (18 cols).
+        feature_cols: Feature columns to fit on. Defaults to ALL_FEATURES (66 cols).
 
     Returns:
         The fitted StandardScaler instance.
@@ -136,7 +136,7 @@ def apply_scaler(
     Args:
         df: DataFrame containing feature_cols columns.
         scaler: A fitted StandardScaler (from fit_and_save_scaler or load_scaler).
-        feature_cols: Feature columns to transform. Defaults to ALL_FEATURES (18 cols).
+        feature_cols: Feature columns to transform. Defaults to ALL_FEATURES (66 cols).
 
     Returns:
         New DataFrame with standardized feature columns.

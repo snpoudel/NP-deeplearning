@@ -239,7 +239,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     # 5. Build model, optimizer, loss
     # ------------------------------------------------------------------
     input_size = len(ALL_FEATURES)
-    model = build_lstm_model(input_size).to(_device)
+    model = build_lstm_model(input_size, mode=mode).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=hp["lr_scheduler_patience"], factor=hp["lr_scheduler_factor"]

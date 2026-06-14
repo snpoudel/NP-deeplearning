@@ -5,7 +5,7 @@ RANDOM_SEED = 42
 
 # Dev uses a single seed for fast smoke-testing; production uses all three.
 DEV_SEEDS  = [42]
-PROD_SEEDS = [42, 123, 456]
+PROD_SEEDS = [42, 123, 456, 789, 2024]
 
 # Backward-compatible alias (resolves to production seeds)
 SEEDS = PROD_SEEDS
