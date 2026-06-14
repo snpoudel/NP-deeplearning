@@ -29,6 +29,7 @@ from shared.dataset import (
     TARGET,
     StreamflowDataset,
     apply_scaler,
+    attach_alphaearth,
     build_concat_dataset,
     load_scaler,
 )
@@ -183,6 +184,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     gauge_dfs = load_data(INPUT_DIR)
     glofas_long = load_glofas(GLOFAS_PATH)
     gauge_dfs = merge_glofas(gauge_dfs, glofas_long)
+    gauge_dfs = attach_alphaearth(gauge_dfs)
     print(f"  Loaded {len(gauge_dfs)} gauges with GloFAS merged")
 
     # Concatenate all gauges

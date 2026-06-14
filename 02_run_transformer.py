@@ -31,6 +31,7 @@ from shared.dataset import (
     TARGET,
     StreamflowDataset,
     apply_scaler,
+    attach_alphaearth,
     build_concat_dataset,
     load_scaler,
 )
@@ -165,6 +166,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     # ------------------------------------------------------------------
     print("Loading data...")
     gauge_dfs = load_data(INPUT_DIR)
+    gauge_dfs = attach_alphaearth(gauge_dfs)
     print(f"  Loaded {len(gauge_dfs)} gauges: {sorted(gauge_dfs)}")
 
     # Concatenate all gauges for global multi-basin training

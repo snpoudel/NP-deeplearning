@@ -45,7 +45,15 @@ STATIC_FEATURES = [
 ]
 
 TARGET = "qobs"
-ALL_FEATURES = DYNAMIC_FEATURES + STATIC_FEATURES  # 18 input features total
+
+# AlphaEarth Foundations embedding columns (64-dim, from input/alphaearth_embeddings.parquet)
+AE_FEATURES = [f"emb_{i}" for i in range(64)]
+EMBEDDINGS_PATH = Path("input/alphaearth_embeddings.parquet")
+
+# ALL_FEATURES uses AlphaEarth embeddings instead of hand-crafted static attributes —
+# chosen by the input ablation experiment (experiment_ae/), which showed AE beats
+# both dynamic-only and dynamic+static on NSE, KGE, RMSE, and PBIAS.
+ALL_FEATURES = DYNAMIC_FEATURES + AE_FEATURES  # 66 input features total
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +89,39 @@ def fit_and_save_scaler(
 def load_scaler(scaler_path: str | Path) -> StandardScaler:
     """Load a previously saved StandardScaler from disk."""
     return joblib.load(scaler_path)
+
+
+def attach_alphaearth(gauge_dfs: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Join AlphaEarth embedding columns into each gauge's DataFrame.
+
+    Reads input/alphaearth_embeddings.parquet (15 rows × 65 cols: gauge_id + emb_0…emb_63)
+    and broadcasts the 64 embedding values as constant columns across all timesteps of
+    each gauge, matching the same pattern used for static basin attributes.
+
+    Run preprocessing/05_get_alphaearth_embeddings.py first to produce the parquet.
+    """
+    if not EMBEDDINGS_PATH.exists():
+        raise FileNotFoundError(
+            f"{EMBEDDINGS_PATH} not found. "
+            "Run preprocessing/05_get_alphaearth_embeddings.py first."
+        )
+    emb_df = pd.read_parquet(EMBEDDINGS_PATH)
+    emb_df["gauge_id"] = emb_df["gauge_id"].astype(str)
+
+    updated = {}
+    for gauge_id, df in gauge_dfs.items():
+        row = emb_df[emb_df["gauge_id"] == gauge_id]
+        if row.empty:
+            raise ValueError(
+                f"gauge_id '{gauge_id}' not found in {EMBEDDINGS_PATH}. "
+                "Re-run preprocessing/05_get_alphaearth_embeddings.py."
+            )
+        emb_vals = row[AE_FEATURES].iloc[0]
+        df = df.copy()
+        for col in AE_FEATURES:
+            df[col] = emb_vals[col]
+        updated[gauge_id] = df
+    return updated
 
 
 def apply_scaler(

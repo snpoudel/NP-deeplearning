@@ -27,6 +27,7 @@ from shared.dataset import (
     TARGET,
     StreamflowDataset,
     apply_scaler,
+    attach_alphaearth,
     build_concat_dataset,
     load_scaler,
 )
@@ -167,6 +168,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     gauge_dfs = load_data(INPUT_DIR)
     grfr_long = load_physical_model(GRFR_PATH, "qgrfr")
     gauge_dfs = merge_physical_model(gauge_dfs, grfr_long, "qgrfr")
+    gauge_dfs = attach_alphaearth(gauge_dfs)
     print(f"  Loaded {len(gauge_dfs)} gauges with GRFR merged")
 
     all_dfs = []
