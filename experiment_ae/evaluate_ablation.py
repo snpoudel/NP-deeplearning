@@ -24,6 +24,7 @@ import re
 import sys
 from pathlib import Path
 
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -31,7 +32,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from shared.hyperparameters import SPLIT_DATES
-from shared.models import kge, nse
+from shared.models import kge, nse, pbias, rmse
 
 # ---------------------------------------------------------------------------
 # Config
@@ -45,17 +46,13 @@ VARIANTS = {
     "lstm_alphaearth": "Dynamic + AlphaEarth",
 }
 
-# Colorblind-safe (Wong palette)
+# Okabe-Ito palette — mirrors the model colors used in 07_evaluate.py
+# lstm_dynamic → lstm (#009E73), lstm_static → glofas_lstm (#0072B2),
+# lstm_alphaearth → grfr_lstm (#D55E00)
 COLORS = {
     "lstm_dynamic":    "#009E73",
     "lstm_static":     "#0072B2",
     "lstm_alphaearth": "#D55E00",
-}
-
-LINESTYLES = {
-    "lstm_dynamic":    "-",
-    "lstm_static":     "--",
-    "lstm_alphaearth": "-.",
 }
 
 PRED_BASE   = Path("output/predictions")
@@ -97,10 +94,7 @@ def load_variant_predictions(variant_name: str) -> dict[str, pd.DataFrame]:
 # ---------------------------------------------------------------------------
 
 def compute_metrics(preds: dict[str, dict[str, pd.DataFrame]]) -> pd.DataFrame:
-    """Compute NSE and KGE per variant per gauge.
-
-    Returns a DataFrame with columns: variant, gauge_id, nse, kge.
-    """
+    """Compute NSE, KGE, RMSE, and PBIAS per variant per gauge."""
     records = []
     for variant_name, gauge_preds in preds.items():
         for gauge_id, df in gauge_preds.items():
@@ -111,64 +105,88 @@ def compute_metrics(preds: dict[str, dict[str, pd.DataFrame]]) -> pd.DataFrame:
                 "gauge_id": gauge_id,
                 "nse":      nse(q_obs, q_sim),
                 "kge":      kge(q_obs, q_sim),
+                "rmse":     rmse(q_obs, q_sim),
+                "pbias":    pbias(q_obs, q_sim),
             })
     return pd.DataFrame(records)
-
-
-# ---------------------------------------------------------------------------
-# CDF helper
-# ---------------------------------------------------------------------------
-
-def _cdf(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Return (sorted_values, cumulative_probabilities) for a CDF plot."""
-    s = np.sort(values)
-    n = len(s)
-    p = np.arange(1, n + 1) / (n + 1)
-    return s, p
 
 
 # ---------------------------------------------------------------------------
 # Figure
 # ---------------------------------------------------------------------------
 
-def plot_cdf(metrics_df: pd.DataFrame) -> plt.Figure:
-    """Two-panel CDF figure: left = NSE, right = KGE."""
-    fig, axes = plt.subplots(1, 2, figsize=(7, 3.5), sharey=True)
+METRICS_META = [
+    ("nse",   "NSE",   None),
+    ("kge",   "KGE",   None),
+    ("rmse",  "RMSE",  None),
+    ("pbias", "PBIAS (%)", 0),   # reference line at 0 for bias
+]
 
-    for metric, ax, xlabel in zip(
-        ["nse", "kge"],
-        axes,
-        ["NSE", "KGE"],
-    ):
-        for variant_name, label in VARIANTS.items():
-            subset = metrics_df[metrics_df["variant"] == variant_name][metric].dropna()
-            if len(subset) == 0:
-                continue
-            vals, probs = _cdf(subset.to_numpy())
-            ax.plot(
-                vals,
-                probs,
-                label=label,
-                color=COLORS[variant_name],
-                linestyle=LINESTYLES[variant_name],
-                linewidth=1.8,
+def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
+    """2×2 boxplot figure: NSE, KGE, RMSE, PBIAS."""
+    variant_keys = list(VARIANTS.keys())
+    x_pos = np.arange(len(variant_keys))
+    labels = [VARIANTS[v] for v in variant_keys]
+
+    fig, axes = plt.subplots(2, 2, figsize=(7, 6), sharex=True)
+    axes_flat = axes.flatten()
+
+    rng = np.random.default_rng(0)
+
+    for ax, (metric, ylabel, refline) in zip(axes_flat, METRICS_META):
+        data_per_variant = [
+            metrics_df[metrics_df["variant"] == v][metric].dropna().to_numpy()
+            for v in variant_keys
+        ]
+
+        bp = ax.boxplot(
+            data_per_variant,
+            positions=x_pos,
+            widths=0.30,
+            patch_artist=True,
+            medianprops=dict(color="black", linewidth=1.8),
+            whiskerprops=dict(linewidth=1.0),
+            capprops=dict(linewidth=1.0),
+            flierprops=dict(marker=""),
+            showfliers=False,
+        )
+
+        for patch, vk in zip(bp["boxes"], variant_keys):
+            patch.set_facecolor(COLORS[vk])
+            patch.set_alpha(0.45)
+            patch.set_edgecolor(COLORS[vk])
+
+        # Jittered dots
+        for xi, (vals, vk) in enumerate(zip(data_per_variant, variant_keys)):
+            jitter = rng.uniform(-0.08, 0.08, size=len(vals))
+            ax.scatter(xi + jitter, vals, color=COLORS[vk], s=16, zorder=3, alpha=0.85, linewidths=0)
+
+        # Median label inside the box, nudged below the median line
+        all_vals = np.concatenate(data_per_variant)
+        y_offset = 0.06 * (np.nanmax(all_vals) - np.nanmin(all_vals))
+        for xi, vals in enumerate(data_per_variant):
+            med = np.median(vals)
+            fmt = f"{med:.2f}" if metric != "rmse" else f"{med:.1f}"
+            ax.text(
+                xi, med - y_offset, fmt,
+                ha="center", va="center", fontsize=7, color="white",
+                fontweight="bold", zorder=5,
+                path_effects=[pe.withStroke(linewidth=2, foreground="#222222")],
             )
 
-        ax.axvline(0, color="gray", linestyle=":", linewidth=0.8, alpha=0.7)
-        ax.set_xlabel(xlabel, fontsize=11)
-        ax.set_xlim(left=min(-0.5, metrics_df[metric].min() - 0.05))
-        ax.set_ylim(0, 1)
-        ax.grid(True, alpha=0.3, linewidth=0.5)
+        if refline is not None:
+            ax.axhline(refline, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
         ax.spines[["top", "right"]].set_visible(False)
 
-    axes[0].set_ylabel("Cumulative probability", fontsize=11)
-    axes[1].legend(
-        frameon=False,
-        fontsize=9,
-        loc="lower right",
-    )
+    # x-tick labels only on bottom row
+    for ax in axes[1]:
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(labels, fontsize=8.5, rotation=15, ha="right")
 
-    fig.suptitle("Input feature ablation — LSTM (seed 42, test 2005–2014)", fontsize=11, y=1.01)
+    fig.suptitle("Input feature ablation — LSTM (seed 42, test 2005–2014)", fontsize=11)
     fig.tight_layout()
     return fig
 
@@ -180,7 +198,7 @@ def plot_cdf(metrics_df: pd.DataFrame) -> plt.Figure:
 def print_summary(metrics_df: pd.DataFrame) -> None:
     print("\n--- Median metrics across 15 gauges ---")
     summary = (
-        metrics_df.groupby("variant")[["nse", "kge"]]
+        metrics_df.groupby("variant")[["nse", "kge", "rmse", "pbias"]]
         .median()
         .rename(index=VARIANTS)
         .round(3)
@@ -221,7 +239,7 @@ def main() -> None:
 
     # Figure
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    fig = plot_cdf(metrics_df)
+    fig = plot_boxplots(metrics_df)
 
     for ext in ("png", "svg"):
         out = FIGURES_DIR / f"fig_input_ablation_cdf.{ext}"
