@@ -116,24 +116,21 @@ def compute_metrics(preds: dict[str, dict[str, pd.DataFrame]]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 METRICS_META = [
-    ("nse",   "NSE",   None),
-    ("kge",   "KGE",   None),
-    ("rmse",  "RMSE",  None),
-    ("pbias", "PBIAS (%)", 0),   # reference line at 0 for bias
+    ("nse",   "NSE",       None),
+    ("pbias", "PBIAS (%)", 0),
 ]
 
 def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
-    """2×2 boxplot figure: NSE, KGE, RMSE, PBIAS."""
+    """1×2 boxplot figure: NSE and PBIAS."""
     variant_keys = list(VARIANTS.keys())
     x_pos = np.arange(len(variant_keys))
     labels = [VARIANTS[v] for v in variant_keys]
 
-    fig, axes = plt.subplots(2, 2, figsize=(7, 6), sharex=True)
-    axes_flat = axes.flatten()
+    fig, axes = plt.subplots(1, 2, figsize=(7, 4))
 
     rng = np.random.default_rng(0)
 
-    for ax, (metric, ylabel, refline) in zip(axes_flat, METRICS_META):
+    for ax, (metric, ylabel, refline) in zip(axes, METRICS_META):
         data_per_variant = [
             metrics_df[metrics_df["variant"] == v][metric].dropna().to_numpy()
             for v in variant_keys
@@ -166,9 +163,8 @@ def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
         y_offset = 0.06 * (np.nanmax(all_vals) - np.nanmin(all_vals))
         for xi, vals in enumerate(data_per_variant):
             med = np.median(vals)
-            fmt = f"{med:.2f}" if metric != "rmse" else f"{med:.1f}"
             ax.text(
-                xi, med - y_offset, fmt,
+                xi, med - y_offset, f"{med:.2f}",
                 ha="center", va="center", fontsize=7, color="white",
                 fontweight="bold", zorder=5,
                 path_effects=[pe.withStroke(linewidth=2, foreground="#222222")],
@@ -177,14 +173,11 @@ def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
         if refline is not None:
             ax.axhline(refline, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
 
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(labels, fontsize=8.5, rotation=15, ha="right")
         ax.set_ylabel(ylabel, fontsize=10)
         ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
         ax.spines[["top", "right"]].set_visible(False)
-
-    # x-tick labels only on bottom row
-    for ax in axes[1]:
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels(labels, fontsize=8.5, rotation=15, ha="right")
 
     fig.suptitle("Input feature ablation — LSTM (seed 42, test 2005–2014)", fontsize=11)
     fig.tight_layout()
