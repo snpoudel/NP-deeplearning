@@ -45,21 +45,34 @@ STATIC_FEATURES = [
 ]
 
 TARGET = "qobs"
-ALL_FEATURES = DYNAMIC_FEATURES + STATIC_FEATURES  # 18 input features total
+
+# AlphaEarth Foundations embedding columns (64-dim, from input/alphaearth_embeddings.parquet)
+AE_FEATURES = [f"emb_{i}" for i in range(64)]
+EMBEDDINGS_PATH = Path("input/alphaearth_embeddings.parquet")
+
+# ALL_FEATURES uses AlphaEarth embeddings instead of hand-crafted static attributes —
+# chosen by the input ablation experiment (experiment_ae/), which showed AE beats
+# both dynamic-only and dynamic+static on NSE, KGE, RMSE, and PBIAS.
+ALL_FEATURES = DYNAMIC_FEATURES + AE_FEATURES  # 66 input features total
 
 
 # ---------------------------------------------------------------------------
 # Scaler helpers
 # ---------------------------------------------------------------------------
 
-def fit_and_save_scaler(train_df: pd.DataFrame, scaler_path: str | Path) -> StandardScaler:
-    """Fit a StandardScaler on ALL_FEATURES of the training split and save it.
+def fit_and_save_scaler(
+    train_df: pd.DataFrame,
+    scaler_path: str | Path,
+    feature_cols: list[str] = ALL_FEATURES,
+) -> StandardScaler:
+    """Fit a StandardScaler on feature_cols of the training split and save it.
 
-    Only dynamic and static features are standardized; the target (qobs) is not.
+    Only the specified features are standardized; the target (qobs) is not.
 
     Args:
-        train_df: Training-split DataFrame (must contain all columns in ALL_FEATURES).
+        train_df: Training-split DataFrame (must contain all columns in feature_cols).
         scaler_path: Path where the fitted scaler will be saved (e.g. output/model/scaler.pkl).
+        feature_cols: Feature columns to fit on. Defaults to ALL_FEATURES (66 cols).
 
     Returns:
         The fitted StandardScaler instance.
@@ -68,7 +81,7 @@ def fit_and_save_scaler(train_df: pd.DataFrame, scaler_path: str | Path) -> Stan
     scaler_path.parent.mkdir(parents=True, exist_ok=True)
 
     scaler = StandardScaler()
-    scaler.fit(train_df[ALL_FEATURES].values)
+    scaler.fit(train_df[feature_cols].values)
     joblib.dump(scaler, scaler_path)
     return scaler
 
@@ -78,20 +91,58 @@ def load_scaler(scaler_path: str | Path) -> StandardScaler:
     return joblib.load(scaler_path)
 
 
-def apply_scaler(df: pd.DataFrame, scaler: StandardScaler) -> pd.DataFrame:
-    """Return a copy of df with ALL_FEATURES standardized using a fitted scaler.
+def attach_alphaearth(gauge_dfs: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Join AlphaEarth embedding columns into each gauge's DataFrame.
+
+    Reads input/alphaearth_embeddings.parquet (15 rows × 65 cols: gauge_id + emb_0…emb_63)
+    and broadcasts the 64 embedding values as constant columns across all timesteps of
+    each gauge, matching the same pattern used for static basin attributes.
+
+    Run preprocessing/05_get_alphaearth_embeddings.py first to produce the parquet.
+    """
+    if not EMBEDDINGS_PATH.exists():
+        raise FileNotFoundError(
+            f"{EMBEDDINGS_PATH} not found. "
+            "Run preprocessing/05_get_alphaearth_embeddings.py first."
+        )
+    emb_df = pd.read_parquet(EMBEDDINGS_PATH)
+    emb_df["gauge_id"] = emb_df["gauge_id"].astype(str)
+
+    updated = {}
+    for gauge_id, df in gauge_dfs.items():
+        row = emb_df[emb_df["gauge_id"] == gauge_id]
+        if row.empty:
+            raise ValueError(
+                f"gauge_id '{gauge_id}' not found in {EMBEDDINGS_PATH}. "
+                "Re-run preprocessing/05_get_alphaearth_embeddings.py."
+            )
+        emb_vals = row[AE_FEATURES].iloc[0]
+        df = df.copy()
+        for col in AE_FEATURES:
+            df[col] = emb_vals[col]
+        updated[gauge_id] = df
+    return updated
+
+
+def apply_scaler(
+    df: pd.DataFrame,
+    scaler: StandardScaler,
+    feature_cols: list[str] = ALL_FEATURES,
+) -> pd.DataFrame:
+    """Return a copy of df with feature_cols standardized using a fitted scaler.
 
     The date and qobs columns are left untouched.
 
     Args:
-        df: DataFrame containing ALL_FEATURES columns.
+        df: DataFrame containing feature_cols columns.
         scaler: A fitted StandardScaler (from fit_and_save_scaler or load_scaler).
+        feature_cols: Feature columns to transform. Defaults to ALL_FEATURES (66 cols).
 
     Returns:
         New DataFrame with standardized feature columns.
     """
     df = df.copy()
-    df[ALL_FEATURES] = scaler.transform(df[ALL_FEATURES].values)
+    df[feature_cols] = scaler.transform(df[feature_cols].values)
     return df
 
 
@@ -103,7 +154,7 @@ class StreamflowDataset(Dataset):
     """Sliding-window sequence dataset for streamflow prediction.
 
     Each sample is a window of seq_len consecutive time steps. The model input
-    is the feature matrix for those steps (shape: seq_len × 18) and the target
+    is the feature matrix for those steps (shape: seq_len × 66) and the target
     is the qobs value at the last step of the window.
 
     Static basin attributes are already constant per basin in the DataFrame, so
@@ -116,27 +167,40 @@ class StreamflowDataset(Dataset):
         seq_len: Number of consecutive days per input sequence.
     """
 
-    def __init__(self, df: pd.DataFrame, seq_len: int) -> None:
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        seq_len: int,
+        feature_cols: list[str] = ALL_FEATURES,
+    ) -> None:
         self.seq_len = seq_len
-        self.X = df[ALL_FEATURES].to_numpy(dtype=np.float32)  # (N, 18)
-        self.y = df[TARGET].to_numpy(dtype=np.float32)        # (N,)
+        self.X = df[feature_cols].to_numpy(dtype=np.float32)
+        self.y = df[TARGET].to_numpy(dtype=np.float32)
 
     def __len__(self) -> int:
         return len(self.X) - self.seq_len + 1
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        x_seq = torch.tensor(self.X[idx : idx + self.seq_len])       # (seq_len, 18)
+        x_seq = torch.tensor(self.X[idx : idx + self.seq_len])       # (seq_len, 66)
         target = torch.tensor([self.y[idx + self.seq_len - 1]])       # (1,)
         return x_seq, target
 
 
-def build_concat_dataset(gauge_split_dfs: dict[str, pd.DataFrame], seq_len: int) -> ConcatDataset:
+def build_concat_dataset(
+    gauge_split_dfs: dict[str, pd.DataFrame],
+    seq_len: int,
+    feature_cols: list[str] = ALL_FEATURES,
+) -> ConcatDataset:
     """One StreamflowDataset per gauge, concatenated to prevent cross-gauge sequences.
 
     Avoids ~7% of training samples that would otherwise mix two gauges' data
     at concatenation boundaries when using a single flat DataFrame.
     """
-    datasets = [StreamflowDataset(df, seq_len) for df in gauge_split_dfs.values() if len(df) >= seq_len]
+    datasets = [
+        StreamflowDataset(df, seq_len, feature_cols)
+        for df in gauge_split_dfs.values()
+        if len(df) >= seq_len
+    ]
     if not datasets:
         raise ValueError("No gauge has enough rows to form a sequence dataset.")
     return ConcatDataset(datasets)

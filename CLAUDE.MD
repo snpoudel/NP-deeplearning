@@ -1,70 +1,82 @@
 # NP-deeplearning
 
-This repository uses simulations from global physical models (GloFAS: Global Flood Awareness System and GRFR: Global Reach-Level Flood Reanalysis), implements deep learning models (LSTM, Transformer), and hybrid post-processor models that correct physical-model outputs using LSTM or transformer post-processing. Models are trained and evaluated on 15 river basins in Nepal and are compared systematically.
+Streamflow prediction for 15 Nepal river basins. Compares GloFAS and GRFR physical model baselines against pure deep learning models (LSTM, Transformer) and four hybrid variants that use a DL post-processor to correct physical model residuals.
 
 ## Repository structure
+
 ```
-preprocessing/               # watershed delineation, ERA5 downloads, and preprocessing
-input/                       # prepared input parquet files per watershed
-shared/                      # shared code: models, dataset, hyperparameters
-    ├── models.py
-    ├── dataset.py
-    └── hyperparameters.py
-output/                      # model outputs (figures, models, predictions)
-run_all.py                   # orchestrator: runs all scripts for all seeds, aggregates, evaluates
-01_run_lstm.py               # train, validate, and predict with LSTM
-02_run_transformer.py        # train, validate, and predict with transformer
-03_run_glofas_lstm.py        # LSTM post-processor for GloFAS
-04_run_grfr_lstm.py          # LSTM post-processor for GRFR
-05_run_glofas_transformer.py # transformer post-processor for GloFAS
-06_run_grfr_transformer.py   # transformer post-processor for GRFR
-07_evaluate.py               # evaluate all models and produce figures (fig1–fig8)
+preprocessing/               # watershed delineation, ERA5/AlphaEarth downloads
+input/                       # per-basin parquet files + alphaearth_embeddings.parquet
+shared/
+    ├── models.py            # LSTMModel, TransformerModel, metrics (nse/kge/rmse/pbias)
+    ├── dataset.py           # feature defs, scaler helpers, StreamflowDataset, attach_alphaearth
+    └── hyperparameters.py   # seeds, splits, dev/production hyperparameter profiles
+experiment_ae/               # Input ablation experiment (AlphaEarth vs static vs dynamic)
+output/                      # model weights, predictions, figures, metrics
+run_all.py                   # orchestrator: train → aggregate → evaluate
+01_run_lstm.py               # pure LSTM
+02_run_transformer.py        # pure Transformer
+03_run_glofas_lstm.py        # GloFAS residual-correction LSTM
+04_run_grfr_lstm.py          # GRFR residual-correction LSTM
+05_run_glofas_transformer.py # GloFAS residual-correction Transformer
+06_run_grfr_transformer.py   # GRFR residual-correction Transformer
+07_evaluate.py               # evaluation figures (fig1–fig9)
+08_residual_analysis.py      # residual analysis figures
 ```
+
+## Data splits
+
+Train: 1990–2004 | Val: 1980–1989 | Test: 2005–2014 | 15 Nepal gauge basins
+
+## Input features (66 total)
+
+- **2 dynamic**: `temperature_2m_mean`, `total_precipitation_sum` (ERA5-Land, daily)
+- **64 static**: Google AlphaEarth Foundations satellite embeddings (`emb_0`…`emb_63`)
+  - Source: `gs://alphaearth_foundations/satellite_embedding/v1/annual/` (CC-BY 4.0)
+  - Extracted by `preprocessing/05_get_alphaearth_embeddings.py` → `input/alphaearth_embeddings.parquet`
+  - Selected over hand-crafted static attributes by the input ablation experiment (`experiment_ae/`)
 
 ## Pipeline
 
-The intended workflow is to run the full pipeline via `run_all.py`:
+```bash
+python run_all.py --mode dev         # smoke-test: seed=[42], small model, 5 epochs
+python run_all.py --mode production  # full run: seeds=[42,123,456,789,2024], 100 epochs
 ```
-python run_all.py
-```
 
-This reads `SEEDS` and `DEVICE` from `shared/hyperparameters.py`, trains all 6 models for every seed, averages predictions and loss curves across seeds, then runs evaluation. Pass `--skip-eval` to stop before evaluation.
+Trains all 6 models × N seeds → averages predictions and loss curves across seeds → runs `07_evaluate.py`. Pass `--skip-eval` to stop before evaluation. Individual scripts can be run standalone for debugging.
 
-Individual scripts (`01_run_lstm.py` through `07_evaluate.py`) can still be run standalone for debugging. When run standalone, each script uses `SEEDS[0]` from hyperparameters.
+## Model logic
 
-## Configuration — shared/hyperparameters.py
+**Pure DL** (01, 02): predict `qsim` directly from 66 input features.
 
-All configuration lives in `shared/hyperparameters.py`. No CLI flags are needed.
+**Residual post-processors** (03–06): predict `residual = qobs − q_physical`; final prediction `qsim = q_physical + predicted_residual`. Reuse the scaler fitted by script 01 — always run 01 before 03–06 (`run_all.py` guarantees this order).
 
-Key entries:
-- `SEEDS` — list of random seeds for multi-seed training (e.g. `[42, 123, 456]` for production). Each seed produces independent model weights; predictions are averaged across seeds before evaluation.
-- `DEVICE` — `"auto"` detects CUDA at runtime; set `"cpu"` or `"cuda"` to force a device.
-- `HYPERPARAMS["lstm"]` and `HYPERPARAMS["transformer"]` — model architecture and training settings. Values marked `# dev size` are small for fast testing; update to production values before a full run.
+`build_lstm_model(input_size, mode)` and `build_transformer_model(input_size, mode)` select architecture size based on mode.
 
 ## Output structure
 
 ```
 output/
 ├── model/
-│   ├── scaler.pkl                              # fitted StandardScaler (deterministic, one copy)
-│   ├── lstm_seed42_best.pt                     # per-seed model weights
-│   ├── lstm_seed42_loss_curves.parquet         # per-seed training/validation loss history
-│   ├── lstm_loss_curves.parquet                # seed-averaged loss curves (input to fig8)
-│   └── ... (same pattern for all 6 models)
+│   ├── scaler.pkl                           # StandardScaler fitted on train split by script 01; shared by all models
+│   ├── lstm_seed42_best.pt                  # per-seed model weights
+│   ├── lstm_seed42_loss_curves.parquet      # per-seed loss history
+│   ├── lstm_loss_curves.parquet             # seed-averaged loss curves (used by fig8)
+│   └── ...                                  # same pattern for all 6 models
 ├── predictions/
 │   ├── lstm/
-│   │   ├── seed42/nepal_120_lstm.parquet       # per-seed raw predictions
-│   │   └── nepal_120_lstm.parquet              # seed-averaged final predictions
-│   └── ... (same for all 6 models)
-├── training_times.csv                          # model, seed, epochs_run, best_val_loss, train_time_seconds
-├── metrics.parquet                             # per-model per-gauge evaluation metrics
-└── figures/                                    # fig1–fig8 PNG and SVG
+│   │   ├── seed42/nepal_120_lstm.parquet    # per-seed predictions (columns: date, qobs, qsim)
+│   │   └── nepal_120_lstm_mean.parquet      # seed-averaged final predictions (loaded by 07_evaluate.py)
+│   └── ...                                  # same for all 6 models
+├── training_times.csv                       # one aggregated row per model: seeds_run, mean epochs/time/val_loss
+├── metrics.parquet                          # per-model per-gauge test-period metrics
+└── figures/                                 # fig1–fig9 PNG and SVG
 ```
 
-## Notes
-- Preprocessing is already completed. Final parquet datasets for all 15 basins are in `input/`. Don't inspect or modify anything in the `preprocessing/` folder.
-- The scaler (`output/model/scaler.pkl`) is fitted once in `01_run_lstm.py` and reused by scripts 02–06. It is deterministic (StandardScaler has no randomness), so it is safe to share across seeds.
-- Scripts 02–06 assert `scaler.pkl` exists before running. Always run script 01 first (or use `run_all.py`).
-- Build and debug incrementally, ensuring each stage works before moving forward.
-- Write clean, minimal, and maintainable code: clear structure, helpful comments, proper docstrings, and readability for a single researcher to maintain easily.
-- Do not make any assumptions; ask explicitly and loudly if anything is unclear.
+## Important notes
+
+- Preprocessing is complete — input parquets and AlphaEarth embeddings are ready in `input/`. Do not modify `preprocessing/`.
+- Scripts 02–06 assert `scaler.pkl` exists before running. Always run script 01 first, or use `run_all.py`.
+- The scaler is shared across all models and seeds (StandardScaler is deterministic — no randomness).
+- Write clean, minimal, maintainable code with clear structure and helpful comments.
+- Ask explicitly, if anything is unclear before proceeding, don't make any assumptions.

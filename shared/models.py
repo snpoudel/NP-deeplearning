@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from shared.hyperparameters import HYPERPARAMS
+from shared.hyperparameters import HYPERPARAMS, get_hyperparams
 
 
 # ---------------------------------------------------------------------------
@@ -56,9 +56,9 @@ class LSTMModel(nn.Module):
         return self.fc(self.dropout(out[:, -1, :]))  # (batch, 1) — last timestep only
 
 
-def build_lstm_model(input_size: int) -> LSTMModel:
-    """Construct an LSTMModel from the global hyperparameters."""
-    hp = HYPERPARAMS["lstm"]
+def build_lstm_model(input_size: int, mode: str = "production") -> LSTMModel:
+    """Construct an LSTMModel using the hyperparameters for the given mode."""
+    hp = get_hyperparams(mode)["lstm"]
     return LSTMModel(
         input_size=input_size,
         hidden_size=hp["hidden_size"],
@@ -142,9 +142,9 @@ class TransformerModel(nn.Module):
         return self.fc(x[:, -1, :])   # (batch, 1) — last timestep only
 
 
-def build_transformer_model(input_size: int) -> TransformerModel:
-    """Construct a TransformerModel from the global hyperparameters."""
-    hp = HYPERPARAMS["transformer"]
+def build_transformer_model(input_size: int, mode: str = "production") -> TransformerModel:
+    """Construct a TransformerModel using the hyperparameters for the given mode."""
+    hp = get_hyperparams(mode)["transformer"]
     return TransformerModel(
         input_size=input_size,
         d_model=hp["d_model"],

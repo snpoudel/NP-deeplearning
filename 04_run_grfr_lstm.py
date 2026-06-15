@@ -27,10 +27,11 @@ from shared.dataset import (
     TARGET,
     StreamflowDataset,
     apply_scaler,
+    attach_alphaearth,
     build_concat_dataset,
     load_scaler,
 )
-from shared.hyperparameters import HYPERPARAMS, SPLIT_DATES
+from shared.hyperparameters import get_hyperparams, SPLIT_DATES
 from shared.models import build_lstm_model, kge, nse, rmse
 
 # ---------------------------------------------------------------------------
@@ -145,14 +146,14 @@ def compute_metrics(qobs_arr: np.ndarray, qsim_arr: np.ndarray) -> dict[str, flo
 # Main
 # ---------------------------------------------------------------------------
 
-def main(seed: int, device: str) -> None:
+def main(seed: int, device: str, mode: str = "dev") -> None:
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     _device = torch.device(device)
     print(f"Using device: {_device} | seed: {seed}")
 
-    hp = HYPERPARAMS["lstm"]
+    hp = get_hyperparams(mode)["lstm"]
     seq_len = hp["seq_len"]
     batch_size = hp["batch_size"]
     num_epochs = hp["num_epochs"]
@@ -160,6 +161,7 @@ def main(seed: int, device: str) -> None:
     lr = hp["learning_rate"]
 
     # Seed-specific output paths
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODEL_DIR / f"grfr_lstm_seed{seed}_best.pt"
     pred_dir = Path("output/predictions/grfr_lstm") / f"seed{seed}"
     pred_dir.mkdir(parents=True, exist_ok=True)
@@ -171,6 +173,7 @@ def main(seed: int, device: str) -> None:
     gauge_dfs = load_data(INPUT_DIR)
     grfr_long = load_physical_model(GRFR_PATH, "qgrfr")
     gauge_dfs = merge_physical_model(gauge_dfs, grfr_long, "qgrfr")
+    gauge_dfs = attach_alphaearth(gauge_dfs)
     print(f"  Loaded {len(gauge_dfs)} gauges with GRFR merged")
 
     all_dfs = []
@@ -242,7 +245,7 @@ def main(seed: int, device: str) -> None:
     # 5. Build model, optimizer, loss
     # ------------------------------------------------------------------
     input_size = len(ALL_FEATURES)
-    model = build_lstm_model(input_size).to(_device)
+    model = build_lstm_model(input_size, mode=mode).to(_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=hp["lr_scheduler_patience"], factor=hp["lr_scheduler_factor"]
@@ -368,10 +371,18 @@ def main(seed: int, device: str) -> None:
 
 
 if __name__ == "__main__":
+    import argparse
     from shared.hyperparameters import DEVICE, SEEDS
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode", choices=["dev", "production"], default="dev",
+        help="Hyperparameter profile: 'dev' (default, fast smoke-test) or 'production' (full run)",
+    )
+    _args = parser.parse_args()
 
     _seed = SEEDS[0]
     _device_str = "cuda" if (DEVICE == "auto" and torch.cuda.is_available()) else (
         DEVICE if DEVICE != "auto" else "cpu"
     )
-    main(seed=_seed, device=_device_str)
+    main(seed=_seed, device=_device_str, mode=_args.mode)

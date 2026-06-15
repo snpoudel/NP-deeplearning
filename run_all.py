@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from shared.hyperparameters import DEVICE, SEEDS
+from shared.hyperparameters import DEVICE, DEV_SEEDS, PROD_SEEDS
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,6 +144,27 @@ def aggregate_loss_curves(seeds: list[int]) -> None:
         print(f"  {model_name}: averaged {len(seed_curves)} seed(s) over {min_len} epochs")
 
 
+def aggregate_training_times() -> None:
+    """Replace per-seed rows in training_times.csv with one averaged row per model."""
+    timing_path = Path("output/training_times.csv")
+    if not timing_path.exists():
+        return
+    df = pd.read_csv(timing_path)
+    agg = (
+        df.groupby("model", sort=False)
+        .agg(
+            seeds_run=("seed", "count"),
+            epochs_run=("epochs_run", "mean"),
+            best_val_loss=("best_val_loss", "mean"),
+            train_time_seconds=("train_time_seconds", "mean"),
+        )
+        .round({"epochs_run": 1, "best_val_loss": 6, "train_time_seconds": 2})
+        .reset_index()
+    )
+    agg.to_csv(timing_path, index=False)
+    print(f"\nTraining times aggregated ({len(agg)} models) → {timing_path}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -164,15 +185,22 @@ def main() -> None:
         "--skip-eval", action="store_true",
         help="Skip 07_evaluate.py after aggregation"
     )
+    parser.add_argument(
+        "--mode", choices=["dev", "production"], default="dev",
+        help="Hyperparameter profile: 'dev' (default, fast smoke-test) or 'production' (full run)",
+    )
     args = parser.parse_args()
+
+    seeds = DEV_SEEDS if args.mode == "dev" else PROD_SEEDS
 
     device = _resolve_device(DEVICE)
     print(f"{'='*60}")
     print(f"NP-deeplearning — full pipeline")
     print(f"  Device : {device}")
-    print(f"  Seeds  : {SEEDS}")
-    print(f"  Runs   : {len(SEEDS)} seed(s) × {len(SCRIPT_ORDER)} models = "
-          f"{len(SEEDS) * len(SCRIPT_ORDER)} total")
+    print(f"  Seeds  : {seeds}")
+    print(f"  Mode   : {args.mode}")
+    print(f"  Runs   : {len(seeds)} seed(s) × {len(SCRIPT_ORDER)} models = "
+          f"{len(seeds) * len(SCRIPT_ORDER)} total")
     print(f"{'='*60}\n")
 
     # Load each training script once (exec_module runs module-level code once)
@@ -191,23 +219,24 @@ def main() -> None:
     # ------------------------------------------------------------------
     pipeline_start = time.time()
 
-    for seed in SEEDS:
+    for seed in seeds:
         print(f"\n{'='*60}")
         print(f"Seed {seed}")
         print(f"{'='*60}")
         for path, label in SCRIPT_ORDER:
             print(f"\n--- {label} | seed={seed} ---")
-            scripts[path].main(seed=seed, device=device)
+            scripts[path].main(seed=seed, device=device, mode=args.mode)
 
     print(f"\n{'='*60}")
     print(f"All training complete in {(time.time() - pipeline_start) / 60:.1f} min")
     print(f"{'='*60}")
 
     # ------------------------------------------------------------------
-    # Aggregate predictions and loss curves across seeds
+    # Aggregate predictions, loss curves, and training times across seeds
     # ------------------------------------------------------------------
-    aggregate_predictions(SEEDS)
-    aggregate_loss_curves(SEEDS)
+    aggregate_predictions(seeds)
+    aggregate_loss_curves(seeds)
+    aggregate_training_times()
 
     # ------------------------------------------------------------------
     # Evaluation

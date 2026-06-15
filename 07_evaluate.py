@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+from scipy import stats
 
 from shared.hyperparameters import SPLIT_DATES
 from shared.models import kge, nse, pbias, pbias_high, pbias_low, pbias_mid, rmse
@@ -100,6 +101,13 @@ plt.rcParams.update({
     "ytick.labelsize": FONT_SIZE,
     "legend.fontsize": FONT_SIZE,
 })
+
+# Shared legend style — applied to all figures for consistency
+_LEG = dict(
+    frameon=True, framealpha=0.92, edgecolor="#cccccc",
+    handlelength=1.5, borderpad=0.3, labelspacing=0.14,
+    fontsize=FONT_SIZE - 2,
+)
 
 # ---------------------------------------------------------------------------
 # Gauge ID normalisation and site labels
@@ -281,7 +289,7 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
     import matplotlib.lines as mlines
 
     fig, (ax_map, ax_avail) = plt.subplots(
-        2, 1, figsize=(7, 9),
+        2, 1, figsize=(6, 7.5),
         gridspec_kw={"height_ratios": [3, 2]},
     )
 
@@ -388,8 +396,8 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
         mpatches.Patch(facecolor="none", edgecolor="none", label=basemap_label),
     ]
     ax_map.legend(handles=legend_handles, loc="upper right",
-                  fontsize=6, frameon=True, fancybox=False,
-                  edgecolor="#bbbbbb", facecolor="white",
+                  fontsize=FONT_SIZE - 2, frameon=True, fancybox=False,
+                  edgecolor="#cccccc", facecolor="white",
                   bbox_to_anchor=(1.0, 0.83))
     ax_map.set_title("(a) Study Basins — Nepal", fontsize=TITLE_SIZE)
 
@@ -453,8 +461,7 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
     ax_avail.set_xlabel("Year")
     ax_avail.set_title("(b) Observed Streamflow Availability", fontsize=TITLE_SIZE)
     ax_avail.grid(True, axis="x", linestyle="--", alpha=0.4, linewidth=0.5, zorder=2)
-    ax_avail.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=3, frameon=False,
-                    fontsize=FONT_SIZE - 1)
+    ax_avail.legend(loc="upper right", ncol=1, **_LEG)
 
     plt.tight_layout(h_pad=1.0)
     plt.savefig(FIGURES_DIR / "fig1_basin_overview.png", dpi=DPI, bbox_inches="tight")
@@ -490,8 +497,8 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
     test_start = pd.Timestamp(SPLIT_DATES["test"][0])
     plot_end   = test_start + pd.DateOffset(years=show_years)
 
-    fig, axes = plt.subplots(3, 2, figsize=(7, 7), sharex=True, sharey=True)
-    fig.subplots_adjust(hspace=0.07, wspace=0.06)
+    fig, axes = plt.subplots(3, 2, figsize=(6, 5.5), sharex=True, sharey=True)
+    fig.subplots_adjust(hspace=0.06, wspace=0.05)
 
     def _get_nse(model_name: str) -> float:
         sub = metrics_df[
@@ -535,17 +542,14 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
                     color=COLORS[model_name],
                     linestyle=LINESTYLES[model_name],
                     linewidth=0.9, zorder=3)
-            lbl = f"{MODEL_LABELS[model_name]} (NSE={nse_val:.2f})"
+            lbl = f"{MODEL_LABELS[model_name]}\n  NSE={nse_val:.2f}"
             legend_lines.append(
                 plt.Line2D([0], [0], color=COLORS[model_name],
                            linestyle=LINESTYLES[model_name],
                            linewidth=0.9, label=lbl)
             )
 
-        ax.legend(handles=legend_lines, loc="upper right",
-                  fontsize=FONT_SIZE - 2, frameon=True, framealpha=0.85,
-                  edgecolor="none", handlelength=1.5,
-                  borderpad=0.3, labelspacing=0.2)
+        ax.legend(handles=legend_lines, loc="upper left", **_LEG)
         ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
 
         # x-ticks only on bottom row
@@ -560,11 +564,6 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
         if col == 0:
             ax.set_ylabel("Flow (mm/day)", fontsize=FONT_SIZE)
 
-    fig.suptitle(
-        f"Time series — {site_label}  "
-        f"({test_start.year}–{(test_start + pd.DateOffset(years=show_years)).year})",
-        fontsize=TITLE_SIZE, y=0.995,
-    )
     plt.savefig(FIGURES_DIR / "fig3_timeseries.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig3_timeseries.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
@@ -572,88 +571,101 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
 
 
 # ---------------------------------------------------------------------------
-# Figure 4 — CDF of NSE and KGE
+# Figure 4 — CDF of NSE and KGE  (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def fig4_cdf_metrics(metrics_df: pd.DataFrame) -> None:
-    """2×2 CDF grid: rows = model groups, columns = NSE / KGE.
+    """Single-panel CDF of NSE for all 8 models."""
+    fig, ax = plt.subplots(1, 1, figsize=(4.5, 3.5))
+    handles = []
 
-    Row 0: Physical (GloFAS, GRFR) + Deep learning (LSTM, Transformer)
-    Row 1: Physical (GloFAS, GRFR) + Post-processors (4 hybrids)
-    """
-    ROW_GROUPS = [
-        ("Physical & Deep learning",  ["glofas", "grfr", "lstm", "transformer"]),
-        ("Physical & Post-processors", ["glofas", "grfr",
-                                        "glofas_lstm", "glofas_transformer",
-                                        "grfr_lstm", "grfr_transformer"]),
-    ]
+    for model_name in DISPLAY_ORDER:
+        sub = metrics_df[metrics_df["model"] == model_name]["nse"].dropna().values
+        if len(sub) == 0:
+            continue
+        vals, probs = _cdf(sub)
+        median_val = float(np.median(sub))
+        lbl = f"{MODEL_LABELS[model_name]} (med={median_val:.2f})"
+        line, = ax.plot(vals, probs,
+                        color=COLORS[model_name],
+                        linestyle=LINESTYLES[model_name],
+                        linewidth=1.3, label=lbl)
+        handles.append(line)
 
-    fig, axes = plt.subplots(2, 2, figsize=(7, 6), sharey=True)
-    fig.subplots_adjust(hspace=0.10, wspace=0.06)
+    x_min = metrics_df["nse"].dropna().min()
+    ax.axhline(0.5, color="#999999", linestyle=":", linewidth=0.9, zorder=1)
+    ax.set_xlim(min(x_min - 0.05, -0.3), 1.02)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("NSE", fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.set_title("CDF of NSE — all models", fontsize=TITLE_SIZE, loc="left", pad=4)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+    ax.legend(handles=handles, loc="upper left",
+              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
 
-    for row_i, (row_title, row_models) in enumerate(ROW_GROUPS):
-        for col_i, metric in enumerate(["nse", "kge"]):
-            ax = axes[row_i, col_i]
-
-            handles_row = []
-            for model_name in row_models:
-                sub = metrics_df[metrics_df["model"] == model_name][metric].dropna().values
-                if len(sub) == 0:
-                    continue
-                vals, probs = _cdf(sub)
-                median_val = float(np.median(sub))
-                lbl = f"{MODEL_LABELS[model_name]} ({median_val:.2f})"
-                line, = ax.plot(vals, probs,
-                                color=COLORS[model_name],
-                                linestyle=LINESTYLES[model_name],
-                                linewidth=1.1,
-                                marker="o", markersize=3,
-                                label=lbl)
-                handles_row.append(line)
-
-            # Red dashed median reference
-            x_min = metrics_df[metric].dropna().min()
-            ax.axhline(0.5, color="red", linestyle="--", linewidth=0.8,
-                       alpha=0.75, zorder=1)
-            ax.text(x_min - 0.03, 0.52, "median",
-                    fontsize=FONT_SIZE - 2, color="red", va="bottom")
-
-            ax.set_xlim(x_min - 0.05, 1.02)
-            ax.set_ylim(0, 1)
-            ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
-
-            # x-label only on bottom row
-            if row_i == 1:
-                ax.set_xlabel(metric.upper())
-            else:
-                ax.set_xticklabels([])
-
-            # y-label only on left column
-            if col_i == 0:
-                ax.set_ylabel("Cumulative probability")
-
-            # Panel title on top row only
-            if row_i == 0:
-                ax.set_title(f"CDF of {metric.upper()}", fontsize=TITLE_SIZE)
-
-            # Row label as small text inside top-left
-            if col_i == 0:
-                ax.text(0.02, 0.98, row_title, transform=ax.transAxes,
-                        fontsize=FONT_SIZE - 2, va="top", ha="left",
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
-                                  alpha=0.7, edgecolor="none"))
-
-            # Legend inside right panel of each row
-            if col_i == 1:
-                ax.legend(handles=handles_row, loc="lower right",
-                          fontsize=FONT_SIZE - 2, frameon=True, framealpha=0.85,
-                          edgecolor="none", handlelength=1.5,
-                          borderpad=0.3, labelspacing=0.2)
-
+    plt.tight_layout()
     plt.savefig(FIGURES_DIR / "fig4_cdf_metrics.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig4_cdf_metrics.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
     print("Saved fig4_cdf_metrics.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 4b — Boxplot of NSE and KGE  (2-row × 1-col)
+# ---------------------------------------------------------------------------
+
+def fig4b_boxplot_metrics(metrics_df: pd.DataFrame) -> None:
+    """Single-panel NSE boxplot with individual basin points and median labels."""
+    rng = np.random.default_rng(42)
+    fig, ax = plt.subplots(1, 1, figsize=(5.5, 3.5))
+
+    data = [metrics_df[metrics_df["model"] == m]["nse"].dropna().values
+            for m in DISPLAY_ORDER]
+
+    bp = ax.boxplot(
+        data,
+        patch_artist=True,
+        notch=False,
+        widths=0.5,
+        showfliers=False,
+        medianprops=dict(color="black", linewidth=1.6, zorder=5),
+        whiskerprops=dict(linewidth=0.8, color="#555555"),
+        capprops=dict(linewidth=0.8, color="#555555"),
+    )
+
+    for i, (patch, model_name) in enumerate(zip(bp["boxes"], DISPLAY_ORDER)):
+        patch.set_facecolor(COLORS[model_name])
+        patch.set_alpha(0.55)
+        patch.set_edgecolor("#555555")
+        patch.set_linewidth(0.6)
+
+        vals = data[i]
+        jitter = rng.uniform(-0.17, 0.17, size=len(vals))
+        ax.scatter(i + 1 + jitter, vals,
+                   color=COLORS[model_name], s=13, alpha=0.9, zorder=6,
+                   edgecolors="white", linewidths=0.3)
+
+        med = float(np.median(vals))
+        ax.text(i + 1, med - 0.05, f"{med:.2f}",
+                ha="center", va="top", fontsize=FONT_SIZE - 2.5,
+                color="#111111", fontweight="bold", zorder=10,
+                bbox=dict(boxstyle="round,pad=0.08", facecolor="white",
+                          alpha=0.9, edgecolor="none", zorder=10))
+
+    ax.axhline(0, color="#888888", linewidth=0.8, linestyle="--", zorder=1)
+    ax.set_xticks(range(1, len(DISPLAY_ORDER) + 1))
+    ax.set_xticklabels([MODEL_LABELS[m] for m in DISPLAY_ORDER],
+                       rotation=30, ha="right", fontsize=FONT_SIZE - 1)
+    ax.set_ylabel("NSE", fontsize=FONT_SIZE)
+    ax.set_title("NSE distribution across basins", fontsize=TITLE_SIZE,
+                 loc="left", pad=4)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.3, linewidth=0.4)
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "fig4b_boxplot_metrics.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig4b_boxplot_metrics.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig4b_boxplot_metrics.png")
 
 
 # ---------------------------------------------------------------------------
@@ -668,8 +680,8 @@ def fig5_bias(metrics_df: pd.DataFrame) -> None:
         "pbias_mid":  "Medium Flow PBIAS (30–90%)",
     }
 
-    fig, axes = plt.subplots(2, 2, figsize=(8, 6), sharex=True)
-    fig.subplots_adjust(hspace=0.15, wspace=0.25)
+    fig, axes = plt.subplots(2, 2, figsize=(7, 5), sharex=True)
+    fig.subplots_adjust(hspace=0.28, wspace=0.32)
 
     for i, (ax, (col, title)) in enumerate(zip(axes.flatten(), bias_cols.items())):
         data = [metrics_df[metrics_df["model"] == m][col].dropna().values
@@ -712,72 +724,109 @@ def fig5_bias(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 6 — Peak flow CDF (standard orientation: x=flow, y=prob)
+# Figure 6 — Peak flow CDF  (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def fig6_peak_flow(preds: dict) -> None:
-    """Two-panel peak-flow CDF: physical+DL (left) and physical+post-processors (right)."""
-    train_qobs = load_training_qobs()
-    train_peak_ref = max(s.max() for s in train_qobs.values()) if train_qobs else None
+    """2-row 1-col peak-flow CDF.
 
-    PANEL_GROUPS = [
-        ("Physical & Deep learning",   ["glofas", "grfr", "lstm", "transformer"]),
-        ("Physical & Post-processors", ["glofas", "grfr",
-                                        "glofas_lstm", "glofas_transformer",
-                                        "grfr_lstm", "grfr_transformer"]),
-    ]
+    (a) Top 1% peak events pooled across all basins.
+    (b) One peak (max) per basin.
+    """
+    gauge_ids = list(preds["lstm"].keys())
+    obs_color = "#333333"
 
-    # Pre-compute observed peaks and per-model peaks once
-    obs_peaks = np.array([df["qobs"].max() for df in preds["lstm"].values()])
-    model_peaks: dict[str, np.ndarray] = {}
-    for mn in DISPLAY_ORDER:
-        peaks = [df["qsim"].max() for df in preds.get(mn, {}).values() if len(df) > 0]
-        if peaks:
-            model_peaks[mn] = np.array(peaks)
+    # ── Top-1% threshold from pooled observations ─────────────────────────
+    all_qobs = np.concatenate([
+        preds["lstm"][gid]["qobs"].dropna().values for gid in gauge_ids
+    ])
+    threshold_99 = float(np.percentile(all_qobs, 99))
 
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4), sharey=True)
-    fig.subplots_adjust(wspace=0.05)
+    top1pct_obs: list[float] = []
+    top1pct_model: dict[str, list[float]] = {mn: [] for mn in DISPLAY_ORDER}
 
-    for col_i, (panel_title, panel_models) in enumerate(PANEL_GROUPS):
-        ax = axes[col_i]
-
-        for model_name in panel_models:
-            if model_name not in model_peaks:
+    for gid in gauge_ids:
+        obs_df = preds["lstm"][gid]
+        mask = obs_df["qobs"].values >= threshold_99
+        if not mask.any():
+            continue
+        top1pct_obs.extend(obs_df.loc[mask, "qobs"].values.tolist())
+        peak_dates = set(obs_df.loc[mask, "date"].values)
+        for model_name in DISPLAY_ORDER:
+            m_df = preds.get(model_name, {}).get(gid)
+            if m_df is None or m_df.empty:
                 continue
-            vals, probs = _cdf(model_peaks[model_name])
-            ax.plot(vals, probs,
-                    color=COLORS[model_name],
-                    linestyle=LINESTYLES[model_name],
-                    linewidth=1.1, marker="o", markersize=3,
-                    label=MODEL_LABELS[model_name])
+            matched = m_df.loc[m_df["date"].isin(peak_dates), "qsim"].dropna()
+            top1pct_model[model_name].extend(matched.values.tolist())
 
-        # Observed in both panels
-        if len(obs_peaks) > 0:
-            vals, probs = _cdf(obs_peaks)
-            ax.plot(vals, probs, color="gray", linestyle="-", linewidth=1.5,
-                    marker="o", markersize=3, label="Observed (test)", zorder=4)
+    # ── One peak per basin ────────────────────────────────────────────────
+    obs_basin_peaks = np.array([preds["lstm"][gid]["qobs"].max() for gid in gauge_ids])
+    model_basin_peaks: dict[str, np.ndarray] = {}
+    for model_name in DISPLAY_ORDER:
+        peaks = [preds[model_name][gid]["qsim"].max()
+                 for gid in gauge_ids
+                 if gid in preds.get(model_name, {}) and len(preds[model_name][gid]) > 0]
+        if peaks:
+            model_basin_peaks[model_name] = np.array(peaks)
 
-        # Train peak annotation (not in legend)
-        if train_peak_ref is not None:
-            ax.axvline(train_peak_ref, color="red", linestyle="--", linewidth=0.9)
-            ax.text(train_peak_ref * 1.015, 0.04,
-                    f"Train peak\n({train_peak_ref:.1f} mm/d)",
-                    rotation=90, va="bottom", ha="left",
-                    fontsize=FONT_SIZE - 1, color="red")
+    # ── Plot ──────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(2, 1, figsize=(4, 5))
 
-        ax.set_xlabel("Peak flow (mm/day)")
-        ax.set_xlim(left=0)
-        ax.set_ylim(0, 1)
-        ax.set_title(panel_title, fontsize=TITLE_SIZE)
-        ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
-        ax.legend(frameon=False, fontsize=FONT_SIZE - 1)
+    legend_handles: list = []
 
-        if col_i == 0:
-            ax.set_ylabel("Cumulative probability")
+    # Panel (a)
+    ax = axes[0]
+    n_top1 = len(top1pct_obs)
+    ax.set_title(f"(a) Top 1% peak events (count = {n_top1})",
+                 fontsize=TITLE_SIZE, loc="left", pad=4)
+    if n_top1 > 0:
+        vals, probs = _cdf(np.array(top1pct_obs))
+        line, = ax.plot(vals, probs, color=obs_color, linestyle="-", linewidth=1.5,
+                        label="Observed", zorder=5)
+        legend_handles.append(line)
+    for model_name in DISPLAY_ORDER:
+        v = top1pct_model.get(model_name, [])
+        if not v:
+            continue
+        vals, probs = _cdf(np.array(v))
+        line, = ax.plot(vals, probs,
+                        color=COLORS[model_name],
+                        linestyle=LINESTYLES[model_name],
+                        linewidth=1.2,
+                        label=MODEL_LABELS[model_name])
+        legend_handles.append(line)
+    ax.set_xlabel("Flow (mm/day)", fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.set_xlim(left=0)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+    ax.legend(handles=legend_handles, loc="lower right",
+              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.25})
 
-    fig.suptitle("Peak flow distribution across basins — test period",
-                 fontsize=TITLE_SIZE, y=1.01)
-    plt.tight_layout()
+    # Panel (b) — no legend (same as (a))
+    ax = axes[1]
+    n_basins = len(obs_basin_peaks)
+    ax.set_title(f"(b) One peak per basin (count = {n_basins})",
+                 fontsize=TITLE_SIZE, loc="left", pad=4)
+    if len(obs_basin_peaks) > 0:
+        vals, probs = _cdf(obs_basin_peaks)
+        ax.plot(vals, probs, color=obs_color, linestyle="-", linewidth=1.5,
+                zorder=5)
+    for model_name in DISPLAY_ORDER:
+        if model_name not in model_basin_peaks:
+            continue
+        vals, probs = _cdf(model_basin_peaks[model_name])
+        ax.plot(vals, probs,
+                color=COLORS[model_name],
+                linestyle=LINESTYLES[model_name],
+                linewidth=1.2)
+    ax.set_xlabel("Peak flow (mm/day)", fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.set_xlim(left=0)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+
+    plt.tight_layout(h_pad=1.2)
     plt.savefig(FIGURES_DIR / "fig6_peak_flow.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig6_peak_flow.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
@@ -817,8 +866,7 @@ def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> Non
     cmap = plt.cm.RdYlGn
     norm = Normalize(vmin=vmin, vmax=vmax)
 
-    # Wider, less tall — model labels embedded inside panels
-    fig, axes = plt.subplots(4, 2, figsize=(8, 6))
+    fig, axes = plt.subplots(4, 2, figsize=(6.5, 5))
     fig.subplots_adjust(bottom=0.08, hspace=0.03, wspace=0.03)
     axes_flat = axes.flatten()
 
@@ -864,7 +912,6 @@ def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> Non
     cbar.set_label("NSE", fontsize=FONT_SIZE, labelpad=3)
     cbar.ax.tick_params(labelsize=FONT_SIZE)
 
-    fig.suptitle("NSE — test period (2005–2014)", y=0.995, fontsize=TITLE_SIZE + 1)
     plt.savefig(FIGURES_DIR / "fig7_nse_maps.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig7_nse_maps.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
@@ -884,7 +931,7 @@ def fig8_loss_curves() -> None:
         "glofas_transformer", "grfr_transformer",
     ]
 
-    fig, axes = plt.subplots(2, 3, figsize=(10, 6))
+    fig, axes = plt.subplots(2, 3, figsize=(8, 4.5))
     axes_flat = axes.flatten()
 
     for i, model_name in enumerate(dl_models):
@@ -910,9 +957,8 @@ def fig8_loss_curves() -> None:
         ax.set_xlabel("Epoch", fontsize=FONT_SIZE)
         ax.set_ylabel("MSE Loss", fontsize=FONT_SIZE)
         ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
-        ax.legend(fontsize=FONT_SIZE - 1, frameon=False)
+        ax.legend(loc="upper right", **_LEG)
 
-    fig.suptitle("Training and Validation Loss Curves", fontsize=TITLE_SIZE + 1)
     plt.tight_layout()
     plt.savefig(FIGURES_DIR / "fig8_loss_curves.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig8_loss_curves.svg", dpi=DPI, bbox_inches="tight")
@@ -966,9 +1012,9 @@ def fig9_basin_properties(metrics_df: pd.DataFrame) -> None:
                              "grfr_lstm", "grfr_transformer"]),
     ]
 
-    fig, axes = plt.subplots(3, 4, figsize=(11, 8),
+    fig, axes = plt.subplots(3, 4, figsize=(9.5, 6),
                              sharey=True, sharex="col")
-    fig.subplots_adjust(hspace=0.10, wspace=0.08)
+    fig.subplots_adjust(hspace=0.08, wspace=0.07)
 
     for row_i, (row_label, row_models) in enumerate(ROW_GROUPS):
         for col_i, (prop_col, prop_label, use_log) in enumerate(PROP_COLS):
@@ -1003,21 +1049,180 @@ def fig9_basin_properties(metrics_df: pd.DataFrame) -> None:
         leg_ax = axes[row_i, 3]
         handles_leg, labels_leg = leg_ax.get_legend_handles_labels()
         if not handles_leg:
-            # collect from any panel in the row
             handles_leg, labels_leg = axes[row_i, 0].get_legend_handles_labels()
         if handles_leg:
             leg_ax.legend(handles=handles_leg, labels=labels_leg,
-                          loc="upper right", fontsize=FONT_SIZE - 1,
-                          frameon=True, framealpha=0.85, edgecolor="none",
-                          handletextpad=0.4, labelspacing=0.3)
+                          loc="best", **_LEG)
 
-    fig.suptitle("NSE vs basin characteristics — test period (2005–2014)",
-                 fontsize=TITLE_SIZE, y=1.005)
-
+    plt.tight_layout(h_pad=0.5, w_pad=0.4)
     plt.savefig(FIGURES_DIR / "fig9_basin_properties.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig9_basin_properties.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
     print("Saved fig9_basin_properties.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 9b — Correlation heatmaps (Pearson & Spearman: NSE vs basin props)
+# ---------------------------------------------------------------------------
+
+def fig9b_correlation_heatmap(metrics_df: pd.DataFrame) -> None:
+    """1-row × 2-col heatmap: Pearson (a) and Spearman (b) correlation of
+    NSE with each basin property, for every model."""
+    props = _load_basin_properties()
+
+    PROP_COLS = [
+        ("drainage_area_km2", "Drainage\narea (km²)"),
+        ("elevation_m",       "Elevation\n(m)"),
+        ("mean_q",            "Mean\ndischarge"),
+        ("frac_snow",         "Snow\nfraction"),
+    ]
+    prop_keys   = [p[0] for p in PROP_COLS]
+    prop_labels = [p[1] for p in PROP_COLS]
+    model_labels = [MODEL_LABELS[m] for m in DISPLAY_ORDER]
+
+    n_models = len(DISPLAY_ORDER)
+    n_props  = len(prop_keys)
+
+    pearson_r  = np.full((n_models, n_props), np.nan)
+    pearson_p  = np.full((n_models, n_props), np.nan)
+    spearman_r = np.full((n_models, n_props), np.nan)
+    spearman_p = np.full((n_models, n_props), np.nan)
+
+    for mi, model_name in enumerate(DISPLAY_ORDER):
+        sub = metrics_df[metrics_df["model"] == model_name].copy()
+        sub = sub.merge(props[["gauge_id"] + prop_keys], on="gauge_id", how="left")
+        for pi, prop in enumerate(prop_keys):
+            valid = sub[["nse", prop]].dropna()
+            if len(valid) < 4:
+                continue
+            x, y = valid[prop].values, valid["nse"].values
+            r, p = stats.pearsonr(x, y)
+            pearson_r[mi, pi], pearson_p[mi, pi] = r, p
+            r, p = stats.spearmanr(x, y)
+            spearman_r[mi, pi], spearman_p[mi, pi] = r, p
+
+    cmap = plt.cm.RdBu_r
+    vmin, vmax = -1, 1
+
+    fig, axes = plt.subplots(1, 2, figsize=(7, 3.5), sharey=True)
+    fig.subplots_adjust(wspace=0.08, bottom=0.22)
+
+    for ax, matrix, pmat, letter, title in [
+        (axes[0], pearson_r,  pearson_p,  "a", "Pearson r"),
+        (axes[1], spearman_r, spearman_p, "b", "Spearman ρ"),
+    ]:
+        im = ax.imshow(matrix, cmap=cmap, vmin=vmin, vmax=vmax,
+                       aspect="auto", interpolation="nearest")
+
+        for mi in range(n_models):
+            for pi in range(n_props):
+                val = matrix[mi, pi]
+                if np.isnan(val):
+                    continue
+                sig = pmat[mi, pi] < 0.05
+                txt = f"{val:.2f}{'*' if sig else ''}"
+                # Dark text on light cells, light text on dark cells
+                text_color = "white" if abs(val) > 0.6 else "#222222"
+                ax.text(pi, mi, txt, ha="center", va="center",
+                        fontsize=FONT_SIZE - 2, color=text_color, fontweight="bold")
+
+        ax.set_xticks(range(n_props))
+        ax.set_xticklabels(prop_labels, fontsize=FONT_SIZE - 1)
+        ax.set_title(f"({letter}) {title}", fontsize=TITLE_SIZE, loc="left", pad=4)
+        ax.tick_params(length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+    axes[0].set_yticks(range(n_models))
+    axes[0].set_yticklabels(model_labels, fontsize=FONT_SIZE - 1)
+
+    # Shared colorbar
+    cbar_ax = fig.add_axes([0.15, 0.06, 0.70, 0.035])
+    sm = ScalarMappable(cmap=cmap, norm=Normalize(vmin=vmin, vmax=vmax))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
+    cbar.set_label("Correlation with NSE  (* p < 0.05)", fontsize=FONT_SIZE - 1)
+    cbar.ax.tick_params(labelsize=FONT_SIZE - 1)
+
+    plt.savefig(FIGURES_DIR / "fig9b_correlation_heatmap.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig9b_correlation_heatmap.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig9b_correlation_heatmap.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 10 — Training time per model
+# ---------------------------------------------------------------------------
+
+_TRAINING_TIMES_PATH = Path("output/training_times.csv")
+_DL_ORDER = [m for m in DISPLAY_ORDER
+             if m not in ("glofas", "grfr")]  # 6 DL / hybrid models
+
+
+def fig10_training_time() -> None:
+    """Horizontal bar chart of average training time per seed for each DL model."""
+    if not _TRAINING_TIMES_PATH.exists():
+        print("  Skipping fig10: output/training_times.csv not found.")
+        return
+
+    df = pd.read_csv(_TRAINING_TIMES_PATH)
+    df["model"] = df["model"].str.strip()
+    df = df.set_index("model")
+
+    # Determine GPU name
+    try:
+        import torch
+        gpu_name = (torch.cuda.get_device_name(0)
+                    if torch.cuda.is_available() else "CPU")
+    except Exception:
+        gpu_name = "GPU (CUDA)"
+
+    # Build ordered arrays (skip models missing from CSV)
+    labels, times, n_seeds_list = [], [], []
+    for model_name in reversed(_DL_ORDER):   # reversed so top bar = first in DISPLAY_ORDER
+        if model_name not in df.index:
+            continue
+        row = df.loc[model_name]
+        avg_min = float(row["train_time_seconds"]) / 60.0  # CSV already stores the per-seed mean
+        labels.append(MODEL_LABELS[model_name])
+        times.append(avg_min)
+        n_seeds_list.append(int(row["seeds_run"]))
+
+    fig, ax = plt.subplots(1, 1, figsize=(5.5, 3.5))
+
+    model_order_rev = [m for m in reversed(_DL_ORDER) if m in df.index]
+    bar_colors = [COLORS[m] for m in model_order_rev]
+
+    bars = ax.barh(labels, times, color=bar_colors, edgecolor="#555555",
+                   linewidth=0.6, height=0.55)
+
+    # Value labels at end of each bar
+    x_max = max(times) if times else 1
+    for bar, t, ns in zip(bars, times, n_seeds_list):
+        ax.text(t + x_max * 0.01, bar.get_y() + bar.get_height() / 2,
+                f"{t:.0f} min/seed  ({ns} seeds)",
+                va="center", ha="left", fontsize=FONT_SIZE - 2, color="#333333")
+
+    ax.set_xlabel("Average training time per seed (minutes)", fontsize=FONT_SIZE)
+    ax.set_title("Training time per model", fontsize=TITLE_SIZE, loc="left", pad=4)
+    ax.set_xlim(0, x_max * 1.55)
+    ax.grid(True, axis="x", linestyle="--", alpha=0.3, linewidth=0.4)
+    ax.tick_params(axis="y", length=0)
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    # GPU annotation
+    ax.text(0.99, 0.02, f"Device: {gpu_name}",
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=FONT_SIZE - 2, color="#555555",
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                      alpha=0.85, edgecolor="#cccccc"))
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "fig10_training_time.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig10_training_time.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig10_training_time.png")
 
 
 # ---------------------------------------------------------------------------
@@ -1026,6 +1231,12 @@ def fig9_basin_properties(metrics_df: pd.DataFrame) -> None:
 
 def main() -> None:
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+    print("Deleting existing figures...")
+    for _old in list(FIGURES_DIR.glob("*.png")) + list(FIGURES_DIR.glob("*.svg")):
+        if "ablation" not in _old.name:
+            _old.unlink()
+    print("  Cleared existing figures (ablation figures preserved).")
 
     print("Loading shapefile...")
     basins_gdf = gpd.read_file(SHAPEFILE_PATH)
@@ -1048,11 +1259,14 @@ def main() -> None:
     fig1_basin_overview(basins_gdf)
     fig3_timeseries(preds, metrics_df, show_years=1)
     fig4_cdf_metrics(metrics_df)
+    fig4b_boxplot_metrics(metrics_df)
     fig5_bias(metrics_df)
     fig6_peak_flow(preds)
     fig7_nse_maps(metrics_df, basins_gdf)
     fig8_loss_curves()
     fig9_basin_properties(metrics_df)
+    fig9b_correlation_heatmap(metrics_df)
+    fig10_training_time()
 
     print(f"\nAll figures saved to {FIGURES_DIR}/")
 
