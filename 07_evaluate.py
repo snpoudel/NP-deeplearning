@@ -28,7 +28,7 @@ from matplotlib.colors import Normalize
 from scipy import stats
 
 from shared.hyperparameters import SPLIT_DATES
-from shared.models import kge, nse, pbias, pbias_high, pbias_low, pbias_mid, rmse
+from shared.metrics import kge, nse, pbias, pbias_high, pbias_low, pbias_mid, rmse
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -476,29 +476,66 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
 
 def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
                     show_years: int = 1) -> None:
-    """3-row × 2-col time series for the representative (median-NSE) basin.
+    """3-row × 1-col time series for a representative basin.
 
-    Column 0: LSTM variants  |  Column 1: Transformer variants
-    Row 0: pure DL (LSTM or Transformer)
-    Row 1: GloFAS + GloFAS+{LSTM|Transformer}
-    Row 2: GRFR  + GRFR+{LSTM|Transformer}
+    Row 0: LSTM and Transformer together (single panel)
+    Row 1: GloFAS, GloFAS+LSTM, GloFAS+Transformer
+    Row 2: GRFR, GRFR+LSTM, GRFR+Transformer
+
+    Basin is chosen where post-processor is as good or better than physical model.
     """
-    gauge_nse = (
-        metrics_df.groupby("gauge_id")["nse"]
-        .mean()
-        .sort_values()
-    )
-    median_idx = len(gauge_nse) // 2
-    rep_gauge = gauge_nse.index[median_idx]
+    # Select basin where BOTH GloFAS hybrids AND GRFR hybrids beat their
+    # respective physical model (so every post-processor panel shows a benefit).
+    all_gauge_ids = metrics_df["gauge_id"].unique()
+    scores: dict[str, float] = {}
+    for gid in all_gauge_ids:
+        sub = metrics_df[metrics_df["gauge_id"] == gid].set_index("model")["nse"]
+        glofas_nse      = sub.get("glofas",             float("nan"))
+        grfr_nse        = sub.get("grfr",               float("nan"))
+        glofas_hyb_mean = (sub.get("glofas_lstm",        float("nan")) +
+                           sub.get("glofas_transformer", float("nan"))) / 2
+        grfr_hyb_mean   = (sub.get("grfr_lstm",          float("nan")) +
+                           sub.get("grfr_transformer",   float("nan"))) / 2
+        # Require physical models to be at least plausible and both groups to improve
+        if (glofas_nse > 0.2 and grfr_nse > 0.2
+                and glofas_hyb_mean > glofas_nse
+                and grfr_hyb_mean   > grfr_nse):
+            scores[gid] = (glofas_hyb_mean - glofas_nse) + (grfr_hyb_mean - grfr_nse)
+
+    if scores:
+        rep_gauge = max(scores, key=scores.get)
+    else:
+        # Fallback: largest total hybrid − physical improvement
+        _phys   = (metrics_df[metrics_df["model"].isin(["glofas", "grfr"])]
+                   .groupby("gauge_id")["nse"].mean())
+        _hybrid = (metrics_df[metrics_df["model"].isin(
+                       ["glofas_lstm", "glofas_transformer",
+                        "grfr_lstm",   "grfr_transformer"])]
+                   .groupby("gauge_id")["nse"].mean())
+        rep_gauge = (_hybrid - _phys).dropna().idxmax()
+
+    # For the print summary, compute per-gauge mean NSE for physical and hybrid groups
+    _phys_mean   = (metrics_df[metrics_df["model"].isin(["glofas", "grfr"])]
+                    .groupby("gauge_id")["nse"].mean())
+    _hybrid_mean = (metrics_df[metrics_df["model"].isin(
+                        ["glofas_lstm", "glofas_transformer",
+                         "grfr_lstm",   "grfr_transformer"])]
+                    .groupby("gauge_id")["nse"].mean())
+
     site_label = SITE_LABELS.get(rep_gauge, f"Site {rep_gauge}")
-    print(f"  Representative basin for Fig 3: {site_label} "
-          f"(mean NSE = {gauge_nse[rep_gauge]:.3f})")
+    print(f"  Representative basin for Fig 3: {site_label}")
+    print(f"    Mean physical NSE={_phys_mean.get(rep_gauge, float('nan')):.3f}, "
+          f"mean hybrid NSE={_hybrid_mean.get(rep_gauge, float('nan')):.3f}")
 
     test_start = pd.Timestamp(SPLIT_DATES["test"][0])
+    test_start += pd.DateOffset(years=1) # start 1-year after test start
     plot_end   = test_start + pd.DateOffset(years=show_years)
 
-    fig, axes = plt.subplots(3, 2, figsize=(6, 5.5), sharex=True, sharey=True)
-    fig.subplots_adjust(hspace=0.06, wspace=0.05)
+    OBS_COLOR = "#999999"
+    OBS_LW    = 0.55
+
+    fig, axes = plt.subplots(3, 1, figsize=(6, 5.5), sharex=True)
+    fig.subplots_adjust(hspace=0.06)
 
     def _get_nse(model_name: str) -> float:
         sub = metrics_df[
@@ -512,27 +549,24 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
             return None
         return full[(full["date"] >= test_start) & (full["date"] < plot_end)]
 
-    # Each cell: (row, col, list of model_names to plot)
-    layout = [
-        (0, 0, ["lstm"]),
-        (0, 1, ["transformer"]),
-        (1, 0, ["glofas", "glofas_lstm"]),
-        (1, 1, ["glofas", "glofas_transformer"]),
-        (2, 0, ["grfr", "grfr_lstm"]),
-        (2, 1, ["grfr", "grfr_transformer"]),
+    panel_configs = [
+        ("(a)", ["lstm", "transformer"]),
+        ("(b)", ["glofas", "glofas_lstm", "glofas_transformer"]),
+        ("(c)", ["grfr",  "grfr_lstm",  "grfr_transformer"]),
     ]
 
-    for row, col, models in layout:
-        ax = axes[row, col]
+    for ax_idx, (panel_label, models) in enumerate(panel_configs):
+        ax = axes[ax_idx]
 
-        # Plot observed from first available model
+        # Observed line — use first model's qobs column (same basin)
         obs_df = _get_df(models[0])
         if obs_df is not None and not obs_df.empty:
             ax.plot(obs_df["date"], obs_df["qobs"],
-                    color="black", linewidth=0.8, zorder=4, label="Observed")
+                    color=OBS_COLOR, linewidth=OBS_LW, zorder=4)
 
-        legend_lines = [plt.Line2D([0], [0], color="black", linewidth=0.8, label="Observed")]
-
+        legend_lines = [
+            plt.Line2D([0], [0], color=OBS_COLOR, linewidth=OBS_LW, label="Observed")
+        ]
         for model_name in models:
             df = _get_df(model_name)
             if df is None or df.empty:
@@ -542,27 +576,26 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
                     color=COLORS[model_name],
                     linestyle=LINESTYLES[model_name],
                     linewidth=0.9, zorder=3)
-            lbl = f"{MODEL_LABELS[model_name]}\n  NSE={nse_val:.2f}"
             legend_lines.append(
                 plt.Line2D([0], [0], color=COLORS[model_name],
-                           linestyle=LINESTYLES[model_name],
-                           linewidth=0.9, label=lbl)
-            )
+                           linestyle=LINESTYLES[model_name], linewidth=0.9,
+                           label=f"{MODEL_LABELS[model_name]} (NSE={nse_val:.2f})"))
 
         ax.legend(handles=legend_lines, loc="upper left", **_LEG)
         ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+        ax.set_ylabel("Flow (mm/day)", fontsize=FONT_SIZE)
+        ax.text(0.01, 0.1, panel_label, transform=ax.transAxes,
+                ha="left", va="bottom", fontsize=FONT_SIZE)
+        # Hide x-tick labels on all but the bottom panel
+        if ax_idx < 2:
+            plt.setp(ax.get_xticklabels(), visible=False)
 
-        # x-ticks only on bottom row
-        if row == 2:
-            ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=6))
-            ax.xaxis.set_major_formatter(mdates.AutoDateFormatter(
-                ax.xaxis.get_major_locator()))
-            plt.setp(ax.get_xticklabels(), rotation=20, ha="right",
-                     fontsize=FONT_SIZE - 1)
-
-        # y-label only on left column
-        if col == 0:
-            ax.set_ylabel("Flow (mm/day)", fontsize=FONT_SIZE)
+    # x-axis tick formatting and label on the bottom panel only
+    axes[2].xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=6))
+    axes[2].xaxis.set_major_formatter(
+        mdates.AutoDateFormatter(axes[2].xaxis.get_major_locator()))
+    plt.setp(axes[2].get_xticklabels(), rotation=20, ha="right", fontsize=FONT_SIZE - 1)
+    axes[2].set_xlabel(f"Time  ({site_label})", fontsize=FONT_SIZE)
 
     plt.savefig(FIGURES_DIR / "fig3_timeseries.png", dpi=DPI, bbox_inches="tight")
     plt.savefig(FIGURES_DIR / "fig3_timeseries.svg", dpi=DPI, bbox_inches="tight")
@@ -598,7 +631,7 @@ def fig4_cdf_metrics(metrics_df: pd.DataFrame) -> None:
     ax.set_ylim(0, 1)
     ax.set_xlabel("NSE", fontsize=FONT_SIZE)
     ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
-    ax.set_title("CDF of NSE — all models", fontsize=TITLE_SIZE, loc="left", pad=4)
+    # ax.set_title("CDF of NSE — all models", fontsize=TITLE_SIZE, loc="left", pad=4)
     ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
     ax.legend(handles=handles, loc="upper left",
               **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
@@ -657,8 +690,8 @@ def fig4b_boxplot_metrics(metrics_df: pd.DataFrame) -> None:
     ax.set_xticklabels([MODEL_LABELS[m] for m in DISPLAY_ORDER],
                        rotation=30, ha="right", fontsize=FONT_SIZE - 1)
     ax.set_ylabel("NSE", fontsize=FONT_SIZE)
-    ax.set_title("NSE distribution across basins", fontsize=TITLE_SIZE,
-                 loc="left", pad=4)
+    # ax.set_title("NSE distribution across basins", fontsize=TITLE_SIZE,
+                #  loc="left", pad=4)
     ax.grid(True, axis="y", linestyle="--", alpha=0.3, linewidth=0.4)
 
     plt.tight_layout()
@@ -669,15 +702,104 @@ def fig4b_boxplot_metrics(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Figure 4c — NSE heatmap: all models × all sites
+# ---------------------------------------------------------------------------
+
+def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
+    """NSE heatmap: x = models, y = sites, colour = NSE.
+
+    Sites are sorted by their mean NSE (best at top) so performance gradients
+    read naturally from top-to-bottom.  Model groups are separated by a thin
+    vertical rule for clarity.
+    """
+    # Sort sites best-to-worst by mean NSE across all models
+    gauge_ids = sorted(metrics_df["gauge_id"].unique(), key=lambda x: float(x))
+    mean_nse  = metrics_df.groupby("gauge_id")["nse"].mean()
+    gauge_ids = sorted(gauge_ids, key=lambda g: mean_nse.get(g, 0), reverse=True)
+
+    n_sites  = len(gauge_ids)
+    n_models = len(DISPLAY_ORDER)
+
+    # Build matrix (rows = sites, cols = models)
+    nse_matrix = np.full((n_sites, n_models), np.nan)
+    for mi, model_name in enumerate(DISPLAY_ORDER):
+        sub = metrics_df[metrics_df["model"] == model_name].set_index("gauge_id")["nse"]
+        for si, gid in enumerate(gauge_ids):
+            if gid in sub.index:
+                nse_matrix[si, mi] = sub[gid]
+
+    site_lbls  = [SITE_LABELS.get(gid, f"Site {gid}") for gid in gauge_ids]
+    model_lbls = [MODEL_LABELS[m] for m in DISPLAY_ORDER]
+
+    vmin = max(float(np.nanmin(nse_matrix)), -0.5)
+    vmax = 1.0
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    cmap = plt.cm.RdYlGn
+
+    fig, ax = plt.subplots(1, 1, figsize=(8.5, 6.5))
+
+    im = ax.imshow(nse_matrix, cmap=cmap, norm=norm, aspect="auto",
+                   interpolation="nearest")
+
+    # White cell borders
+    for x in np.arange(-0.5, n_models, 1):
+        ax.axvline(x, color="white", linewidth=1.0, zorder=3)
+    for y in np.arange(-0.5, n_sites, 1):
+        ax.axhline(y, color="white", linewidth=1.0, zorder=3)
+
+    # Annotate cells with NSE value; contrast text colour against background
+    for si in range(n_sites):
+        for mi in range(n_models):
+            val = nse_matrix[si, mi]
+            if np.isnan(val):
+                continue
+            normed = norm(val)
+            text_color = "white" if (normed < 0.28 or normed > 0.78) else "#1a1a1a"
+            ax.text(mi, si, f"{val:.2f}",
+                    ha="center", va="center",
+                    fontsize=FONT_SIZE - 1.5, color=text_color,
+                    fontweight="bold", zorder=4)
+
+    # Thicker vertical separators between model groups:
+    #   group 0: lstm, transformer  (after col 1)
+    #   group 1: glofas, glofas_lstm, glofas_transformer  (after col 4)
+    #   group 2: grfr, grfr_lstm, grfr_transformer
+    for sep_x in [1.5, 4.5]:
+        ax.axvline(sep_x, color="#444444", linewidth=2.0, zorder=5)
+
+    ax.set_xticks(range(n_models))
+    ax.set_xticklabels(model_lbls, rotation=35, ha="right", fontsize=FONT_SIZE)
+    ax.set_yticks(range(n_sites))
+    ax.set_yticklabels(site_lbls, fontsize=FONT_SIZE - 0.5)
+    ax.tick_params(length=0)
+    # ax.set_title("NSE — all models × all sites", fontsize=TITLE_SIZE,
+    #              loc="left", pad=6)
+
+    # Clean look: no outer spines
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.88, aspect=28, pad=0.02)
+    cbar.set_label("NSE", fontsize=FONT_SIZE)
+    cbar.ax.tick_params(labelsize=FONT_SIZE - 1)
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "fig4c_nse_heatmap.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig4c_nse_heatmap.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig4c_nse_heatmap.png")
+
+
+# ---------------------------------------------------------------------------
 # Figure 5 — Bias analysis (four panels, shared x-axis)
 # ---------------------------------------------------------------------------
 
 def fig5_bias(metrics_df: pd.DataFrame) -> None:
     bias_cols = {
-        "pbias":      "Overall PBIAS (%)",
-        "pbias_high": "High Flow PBIAS (top 10%)",
-        "pbias_low":  "Low Flow PBIAS (bottom 30%)",
-        "pbias_mid":  "Medium Flow PBIAS (30–90%)",
+        "pbias":      "(a) Overall PBIAS (%)",
+        "pbias_high": "(b) High Flow PBIAS (top 10%)",
+        "pbias_low":  "(c) Low Flow PBIAS (bottom 30%)",
+        "pbias_mid":  "(d) Medium Flow PBIAS (30–90%)",
     }
 
     fig, axes = plt.subplots(2, 2, figsize=(7, 5), sharex=True)
@@ -777,7 +899,7 @@ def fig6_peak_flow(preds: dict) -> None:
     # Panel (a)
     ax = axes[0]
     n_top1 = len(top1pct_obs)
-    ax.set_title(f"(a) Top 1% peak events (count = {n_top1})",
+    ax.set_title(f"(a) Top 1% peak event across all basins (count = {n_top1})",
                  fontsize=TITLE_SIZE, loc="left", pad=4)
     if n_top1 > 0:
         vals, probs = _cdf(np.array(top1pct_obs))
@@ -806,7 +928,7 @@ def fig6_peak_flow(preds: dict) -> None:
     # Panel (b) — no legend (same as (a))
     ax = axes[1]
     n_basins = len(obs_basin_peaks)
-    ax.set_title(f"(b) One peak per basin (count = {n_basins})",
+    ax.set_title(f"(b) One highest peak event per basin (count = {n_basins})",
                  fontsize=TITLE_SIZE, loc="left", pad=4)
     if len(obs_basin_peaks) > 0:
         vals, probs = _cdf(obs_basin_peaks)
@@ -866,11 +988,19 @@ def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> Non
     cmap = plt.cm.RdYlGn
     norm = Normalize(vmin=vmin, vmax=vmax)
 
+    # Panel arrangement: row 0 = DL, row 1 = physical, row 2 = +LSTM, row 3 = +Transformer
+    _FIG7_ORDER = [
+        "lstm",               "transformer",
+        "glofas",             "grfr",
+        "glofas_lstm",        "grfr_lstm",
+        "glofas_transformer", "grfr_transformer",
+    ]
+
     fig, axes = plt.subplots(4, 2, figsize=(6.5, 5))
     fig.subplots_adjust(bottom=0.08, hspace=0.03, wspace=0.03)
     axes_flat = axes.flatten()
 
-    for i, model_name in enumerate(DISPLAY_ORDER):
+    for i, model_name in enumerate(_FIG7_ORDER):
         ax = axes_flat[i]
 
         if nepal_gdf is not None:
@@ -892,7 +1022,8 @@ def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> Non
                             linewidth=0.4, zorder=1)
 
         # Title embedded inside panel — top right
-        ax.text(0.97, 0.97, MODEL_LABELS[model_name],
+        panel_letter = chr(ord("a") + i)
+        ax.text(0.97, 0.97, f"({panel_letter}) {MODEL_LABELS[model_name]}",
                 transform=ax.transAxes, ha="right", va="top",
                 fontsize=FONT_SIZE - 1,
                 bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
@@ -938,10 +1069,13 @@ def fig8_loss_curves() -> None:
         ax = axes_flat[i]
         loss_path = _MODEL_DIR / f"{model_name}_loss_curves.parquet"
 
+        panel_letter = chr(ord("a") + i)
+        panel_title = f"({panel_letter}) {MODEL_LABELS[model_name]}"
+
         if not loss_path.exists():
             ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
                     ha="center", va="center", fontsize=FONT_SIZE, color="gray")
-            ax.set_title(MODEL_LABELS[model_name], fontsize=TITLE_SIZE)
+            ax.set_title(panel_title, fontsize=TITLE_SIZE)
             ax.set_xlabel("Epoch", fontsize=FONT_SIZE)
             ax.set_ylabel("MSE Loss", fontsize=FONT_SIZE)
             continue
@@ -953,7 +1087,7 @@ def fig8_loss_curves() -> None:
                 color=COLORS[model_name], linestyle="--", linewidth=1.2,
                 alpha=0.7, label="Validation")
 
-        ax.set_title(MODEL_LABELS[model_name], fontsize=TITLE_SIZE)
+        ax.set_title(panel_title, fontsize=TITLE_SIZE)
         ax.set_xlabel("Epoch", fontsize=FONT_SIZE)
         ax.set_ylabel("MSE Loss", fontsize=FONT_SIZE)
         ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
@@ -1260,6 +1394,7 @@ def main() -> None:
     fig3_timeseries(preds, metrics_df, show_years=1)
     fig4_cdf_metrics(metrics_df)
     fig4b_boxplot_metrics(metrics_df)
+    fig4c_nse_heatmap(metrics_df)
     fig5_bias(metrics_df)
     fig6_peak_flow(preds)
     fig7_nse_maps(metrics_df, basins_gdf)

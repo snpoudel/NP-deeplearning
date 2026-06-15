@@ -32,7 +32,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from shared.hyperparameters import SPLIT_DATES
-from shared.models import kge, nse, pbias, rmse
+from shared.metrics import kge, nse, pbias, rmse
 
 # ---------------------------------------------------------------------------
 # Config
@@ -177,9 +177,17 @@ def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
         ax.set_xticklabels(labels, fontsize=8.5, rotation=15, ha="right")
         ax.set_ylabel(ylabel, fontsize=10)
         ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
-        ax.spines[["top", "right"]].set_visible(False)
+        # ax.spines[["top", "right"]].set_visible(False)
 
-    fig.suptitle("Input feature ablation — LSTM (seed 42, test 2005–2014)", fontsize=11)
+    for ax, label in zip(axes, ["(a)", "(b)"]):
+        ax.text(
+            0.02, 0.04, label,
+            transform=ax.transAxes,
+            fontsize=10,
+            va="bottom", ha="left",
+        )
+
+    # fig.suptitle("Input feature ablation — LSTM (seed 42, test 2005–2014)", fontsize=11)
     fig.tight_layout()
     return fig
 
