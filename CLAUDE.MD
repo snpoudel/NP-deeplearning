@@ -75,6 +75,7 @@ output/
 
 ## Important notes
 
+- Use a virtual environment in the repo root. If it does not exist, create it with `python -m venv venv`, install dependencies with `pip install -r requirements.txt`, activate it with `source venv/Scripts/activate` (Bash) or `.\venv\Scripts\Activate.ps1` (PowerShell), and use it for all scripts to avoid dependency issues.
 - Preprocessing is complete — input parquets and AlphaEarth embeddings are ready in `input/`. Do not modify `preprocessing/`.
 - Scripts 02–06 assert `scaler.pkl` exists before running. Always run script 01 first, or use `run_all.py`.
 - The scaler is shared across all models and seeds (StandardScaler is deterministic — no randomness).
