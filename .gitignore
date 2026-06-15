@@ -1,5 +1,6 @@
 # Ignore tabular exports
 *.csv
+!input/selected_hydro_stations.csv
 
 # Ignore figure/image outputs
 *.png
