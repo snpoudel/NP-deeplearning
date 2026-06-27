@@ -41,9 +41,9 @@ from shared.metrics import kge, nse, pbias, rmse
 SEED = 42
 
 VARIANTS = {
-    "lstm_dynamic":    "Dynamic only",
-    "lstm_static":     "Dynamic + Static",
-    "lstm_alphaearth": "Dynamic + AlphaEarth",
+    "lstm_dynamic":    "Dynamic\nonly",
+    "lstm_static":     "Dynamic +\nbasin attributes",
+    "lstm_alphaearth": "Dynamic +\nAlphaEarth",
 }
 
 # Okabe-Ito palette — mirrors the model colors used in 07_evaluate.py
@@ -174,7 +174,7 @@ def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
             ax.axhline(refline, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
 
         ax.set_xticks(x_pos)
-        ax.set_xticklabels(labels, fontsize=8.5, rotation=15, ha="right")
+        ax.set_xticklabels(labels, fontsize=8.5, rotation=0, ha="center")
         ax.set_ylabel(ylabel, fontsize=10)
         ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
         # ax.spines[["top", "right"]].set_visible(False)
