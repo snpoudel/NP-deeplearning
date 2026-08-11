@@ -20,7 +20,11 @@ DL models and post-processors share the same architecture, hyperparameters, and 
 
 - **2 dynamic** (daily, ERA5-Land): `temperature_2m_mean`, `total_precipitation_sum`
 - **64 static** (per basin): Google AlphaEarth Foundations satellite embeddings (`emb_0`…`emb_63`)
-  — selected via an input ablation experiment comparing dynamic-only vs. dynamic + basin attributes vs. dynamic + AlphaEarth (`experiment_ae/`)
+  — selected via an input ablation experiment (LSTM + Transformer) comparing dynamic-only vs. dynamic + basin attributes vs. dynamic + AlphaEarth (`experiment_ae/`)
+
+## Hyperparameters
+
+Production hidden size — `hidden_size=256` (LSTM), `d_model=128` (Transformer) — was confirmed by a hidden-size sweep over `{64, 128, 256}` for both architectures, AlphaEarth input, single seed (`experiment_hp_tuning/`).
 
 ## Data splits
 
@@ -39,9 +43,14 @@ shared/
     ├── models.py            # LSTMModel, TransformerModel, build functions, metrics (nse/kge/rmse/pbias)
     ├── dataset.py           # feature lists, scaler helpers, StreamflowDataset, attach_alphaearth
     └── hyperparameters.py   # dev/production profiles, seeds, train-val-test splits
-experiment_ae/               # completed input ablation: AlphaEarth vs static vs dynamic-only
-    ├── run_ablation.py      # trains 3 LSTM input variants (single seed)
-    └── evaluate_ablation.py # 2×2 boxplot comparison (NSE, KGE, RMSE, PBIAS)
+experiment_ae/                     # completed input ablation: AlphaEarth vs static vs dynamic-only
+    ├── run_ablation.py             # trains 3 LSTM input variants (single seed)
+    ├── run_ablation_transformer.py # trains 3 Transformer input variants (single seed)
+    └── evaluate_ablation.py        # 2×2 boxplot grid: LSTM/Transformer × NSE/PBIAS
+experiment_hp_tuning/              # completed hidden-size sweep: 64 / 128 / 256, AlphaEarth input
+    ├── run_tuning_lstm.py          # sweeps hidden_size (single seed)
+    ├── run_tuning_transformer.py   # sweeps d_model (single seed)
+    └── evaluate_tuning.py          # validation-loss line plot vs. hidden size
 output/                      # model weights, predictions, figures, metrics (git-ignored)
 run_all.py                   # orchestrator: train all models → aggregate across seeds → evaluate
 01_run_lstm.py               # pure LSTM (fits and saves scaler)
@@ -85,6 +94,22 @@ python 01_run_lstm.py --mode dev
 python 07_evaluate.py
 ```
 
+### Experiments
+
+Both experiments use the AlphaEarth input variant, seed 42, and `--mode dev|production` (default `dev`).
+
+```bash
+# Input ablation — dynamic-only vs. + basin attributes vs. + AlphaEarth
+python experiment_ae/run_ablation.py --mode production              # LSTM
+python experiment_ae/run_ablation_transformer.py --mode production  # Transformer
+python experiment_ae/evaluate_ablation.py                           # fig_input_ablation_cdf.png
+
+# Hidden-size tuning — hidden_size / d_model in {64, 128, 256}
+python experiment_hp_tuning/run_tuning_lstm.py --mode production
+python experiment_hp_tuning/run_tuning_transformer.py --mode production
+python experiment_hp_tuning/evaluate_tuning.py                      # fig_hp_tuning_val_loss.png
+```
+
 ## Output structure
 
 ```
@@ -97,7 +122,9 @@ output/
 ├── predictions/
 │   ├── {model}/seed{N}/nepal_{id}_{model}.parquet   # per-seed predictions (date, qobs, qsim)
 │   └── {model}/nepal_{id}_{model}_mean.parquet      # seed-averaged predictions (07_evaluate.py input)
-├── training_times.csv   # one row per model: seeds_run, mean epochs, mean train time, mean best val loss
-├── metrics.parquet      # NSE/KGE/RMSE/PBIAS per model per gauge (test period only)
-└── figures/             # fig1–fig9 PNG + SVG at 300 DPI
+├── training_times.csv          # one row per model: seeds_run, mean epochs, mean train time, mean best val loss
+├── metrics.parquet             # NSE/KGE/RMSE/PBIAS per model per gauge (test period only)
+├── metrics_input_ablation.parquet  # per-gauge NSE/KGE/RMSE/PBIAS per experiment_ae/ variant
+├── metrics_hp_tuning.parquet       # best val loss, epochs, train time per experiment_hp_tuning/ variant
+└── figures/                    # fig1–fig9, fig_input_ablation_cdf, fig_hp_tuning_val_loss — PNG + SVG at 300 DPI
 ```

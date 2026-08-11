@@ -76,6 +76,7 @@ output/
 ## Important notes
 
 - Use a virtual environment in the repo root. If it does not exist, create it with `python -m venv venv`, install dependencies with `pip install -r requirements.txt`, activate it with `source venv/Scripts/activate` (Bash) or `.\venv\Scripts\Activate.ps1` (PowerShell), and use it for all scripts to avoid dependency issues.
+- **GPU VM (`vm-sandeep`)**: shared GCE A100 VM (`us-central1-f`, project `spherical-berm-323321`), also used by the `Multi-domain-time-series` project one directory up — see that repo's `project_management/environment_spec.md` for the full spec (cost, stop discipline, `ZONE_RESOURCE_POOL_EXHAUSTED` retry policy). On this Mac, SSH via the `vm-sandeep` host alias in `~/.ssh/config`. Repo checkout lives at `~/NP-deeplearning` on the VM (own clone, separate from local); venv at `~/NP-deeplearning/venv/bin/python`, activate with `source venv/bin/activate` (Linux — not the Windows syntax above). `DEVICE = "auto"` in `shared/hyperparameters.py` already resolves to `cuda` when available, so no code changes are needed to run there. Start the VM only right before a GPU run and stop it immediately after, per the same discipline as the sibling project.
 - Preprocessing is complete — input parquets and AlphaEarth embeddings are ready in `input/`. Do not modify `preprocessing/`.
 - Scripts 02–06 assert `scaler.pkl` exists before running. Always run script 01 first, or use `run_all.py`.
 - The scaler is shared across all models and seeds (StandardScaler is deterministic — no randomness).
