@@ -1,18 +1,23 @@
 """
 experiment_ae/evaluate_ablation.py
 
-Evaluate the three input-feature LSTM variants and produce a 2-panel CDF
-figure comparing NSE and KGE across the 15 Nepal basins.
+Evaluate the input-feature ablation for both LSTM and Transformer and produce
+a 2x3 boxplot figure comparing NSE, PBIAS, and HFB (high-flow bias) across the
+15 Nepal basins.
 
-Reads predictions written by experiment_ae/run_ablation.py:
+Reads predictions written by experiment_ae/run_ablation.py (LSTM) and
+experiment_ae/run_ablation_transformer.py (Transformer):
     output/predictions/lstm_dynamic/seed42/
     output/predictions/lstm_static/seed42/
     output/predictions/lstm_alphaearth/seed42/
+    output/predictions/transformer_dynamic/seed42/
+    output/predictions/transformer_static/seed42/
+    output/predictions/transformer_alphaearth/seed42/
 
 Outputs:
     output/figures/fig_input_ablation_cdf.png
     output/figures/fig_input_ablation_cdf.svg
-    Printed table of median NSE and KGE per variant.
+    Printed table of median NSE, KGE, RMSE, PBIAS, HFB per variant.
 
 Usage:
     python experiment_ae/evaluate_ablation.py
@@ -40,19 +45,22 @@ from shared.metrics import kge, nse, pbias, rmse
 
 SEED = 42
 
-VARIANTS = {
-    "lstm_dynamic":    "Dynamic\nonly",
-    "lstm_static":     "Dynamic +\nbasin attributes",
-    "lstm_alphaearth": "Dynamic +\nAlphaEarth",
+ARCHITECTURES = {
+    "lstm":        "LSTM",
+    "transformer": "Transformer",
+}
+
+INPUT_VARIANTS = {
+    "dynamic":    "Dynamic\nonly",
+    "static":     "Dynamic +\nbasin attributes",
+    "alphaearth": "Dynamic +\nAlphaEarth",
 }
 
 # Okabe-Ito palette — mirrors the model colors used in 07_evaluate.py
-# lstm_dynamic → lstm (#009E73), lstm_static → glofas_lstm (#0072B2),
-# lstm_alphaearth → grfr_lstm (#D55E00)
 COLORS = {
-    "lstm_dynamic":    "#009E73",
-    "lstm_static":     "#0072B2",
-    "lstm_alphaearth": "#D55E00",
+    "dynamic":    "#009E73",
+    "static":     "#0072B2",
+    "alphaearth": "#D55E00",
 }
 
 PRED_BASE   = Path("output/predictions")
@@ -71,7 +79,8 @@ def load_variant_predictions(variant_name: str) -> dict[str, pd.DataFrame]:
     if not pred_dir.exists():
         raise FileNotFoundError(
             f"Prediction directory not found: {pred_dir}\n"
-            "Run experiment_ae/run_ablation.py first."
+            "Run experiment_ae/run_ablation.py and "
+            "experiment_ae/run_ablation_transformer.py first."
         )
 
     preds = {}
@@ -97,16 +106,19 @@ def compute_metrics(preds: dict[str, dict[str, pd.DataFrame]]) -> pd.DataFrame:
     """Compute NSE, KGE, RMSE, and PBIAS per variant per gauge."""
     records = []
     for variant_name, gauge_preds in preds.items():
+        architecture, input_variant = variant_name.split("_", 1)
         for gauge_id, df in gauge_preds.items():
             q_obs = df["qobs"].to_numpy(dtype=np.float64)
             q_sim = df["qsim"].to_numpy(dtype=np.float64)
             records.append({
-                "variant":  variant_name,
-                "gauge_id": gauge_id,
-                "nse":      nse(q_obs, q_sim),
-                "kge":      kge(q_obs, q_sim),
-                "rmse":     rmse(q_obs, q_sim),
-                "pbias":    pbias(q_obs, q_sim),
+                "variant":       variant_name,
+                "architecture":  architecture,
+                "input_variant": input_variant,
+                "gauge_id":      gauge_id,
+                "nse":           nse(q_obs, q_sim),
+                "kge":           kge(q_obs, q_sim),
+                "rmse":          rmse(q_obs, q_sim),
+                "pbias":         pbias(q_obs, q_sim),
             })
     return pd.DataFrame(records)
 
@@ -121,73 +133,83 @@ METRICS_META = [
 ]
 
 def plot_boxplots(metrics_df: pd.DataFrame) -> plt.Figure:
-    """1×2 boxplot figure: NSE and PBIAS."""
-    variant_keys = list(VARIANTS.keys())
+    """2x2 boxplot figure: rows = NSE, PBIAS (shared y-label per row),
+    columns = LSTM, Transformer (labeled at top)."""
+    variant_keys = list(INPUT_VARIANTS.keys())
+    arch_keys = list(ARCHITECTURES.keys())
     x_pos = np.arange(len(variant_keys))
-    labels = [VARIANTS[v] for v in variant_keys]
+    labels = [INPUT_VARIANTS[v] for v in variant_keys]
 
-    fig, axes = plt.subplots(1, 2, figsize=(7, 4))
+    n_rows, n_cols = len(METRICS_META), len(arch_keys)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6, 5), sharey="row")
 
     rng = np.random.default_rng(0)
+    col_labels = iter("abcdefghijklmnop")
 
-    for ax, (metric, ylabel, refline) in zip(axes, METRICS_META):
-        data_per_variant = [
-            metrics_df[metrics_df["variant"] == v][metric].dropna().to_numpy()
-            for v in variant_keys
-        ]
+    for col, architecture in enumerate(arch_keys):
+        arch_df = metrics_df[metrics_df["architecture"] == architecture]
 
-        bp = ax.boxplot(
-            data_per_variant,
-            positions=x_pos,
-            widths=0.30,
-            patch_artist=True,
-            medianprops=dict(color="black", linewidth=1.8),
-            whiskerprops=dict(linewidth=1.0),
-            capprops=dict(linewidth=1.0),
-            flierprops=dict(marker=""),
-            showfliers=False,
-        )
+        for row, (metric, ylabel, refline) in enumerate(METRICS_META):
+            ax = axes[row, col]
+            data_per_variant = [
+                arch_df[arch_df["input_variant"] == v][metric].dropna().to_numpy()
+                for v in variant_keys
+            ]
 
-        for patch, vk in zip(bp["boxes"], variant_keys):
-            patch.set_facecolor(COLORS[vk])
-            patch.set_alpha(0.45)
-            patch.set_edgecolor(COLORS[vk])
-
-        # Jittered dots
-        for xi, (vals, vk) in enumerate(zip(data_per_variant, variant_keys)):
-            jitter = rng.uniform(-0.08, 0.08, size=len(vals))
-            ax.scatter(xi + jitter, vals, color=COLORS[vk], s=16, zorder=3, alpha=0.85, linewidths=0)
-
-        # Median label inside the box, nudged below the median line
-        all_vals = np.concatenate(data_per_variant)
-        y_offset = 0.06 * (np.nanmax(all_vals) - np.nanmin(all_vals))
-        for xi, vals in enumerate(data_per_variant):
-            med = np.median(vals)
-            ax.text(
-                xi, med - y_offset, f"{med:.2f}",
-                ha="center", va="center", fontsize=7, color="white",
-                fontweight="bold", zorder=5,
-                path_effects=[pe.withStroke(linewidth=2, foreground="#222222")],
+            bp = ax.boxplot(
+                data_per_variant,
+                positions=x_pos,
+                widths=0.30,
+                patch_artist=True,
+                medianprops=dict(color="black", linewidth=1.8),
+                whiskerprops=dict(linewidth=1.0),
+                capprops=dict(linewidth=1.0),
+                flierprops=dict(marker=""),
+                showfliers=False,
             )
 
-        if refline is not None:
-            ax.axhline(refline, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+            for patch, vk in zip(bp["boxes"], variant_keys):
+                patch.set_facecolor(COLORS[vk])
+                patch.set_alpha(0.45)
+                patch.set_edgecolor(COLORS[vk])
 
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels(labels, fontsize=8.5, rotation=0, ha="center")
-        ax.set_ylabel(ylabel, fontsize=10)
-        ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
-        # ax.spines[["top", "right"]].set_visible(False)
+            # Jittered dots
+            for xi, (vals, vk) in enumerate(zip(data_per_variant, variant_keys)):
+                jitter = rng.uniform(-0.08, 0.08, size=len(vals))
+                ax.scatter(xi + jitter, vals, color=COLORS[vk], s=16, zorder=3, alpha=0.85, linewidths=0)
 
-    for ax, label in zip(axes, ["(a)", "(b)"]):
-        ax.text(
-            0.02, 0.04, label,
-            transform=ax.transAxes,
-            fontsize=10,
-            va="bottom", ha="left",
+            # Median label inside the box, nudged below the median line
+            all_vals = np.concatenate(data_per_variant)
+            y_offset = 0.06 * (np.nanmax(all_vals) - np.nanmin(all_vals))
+            for xi, vals in enumerate(data_per_variant):
+                med = np.median(vals)
+                ax.text(
+                    xi, med - y_offset, f"{med:.2f}",
+                    ha="center", va="center", fontsize=7, color="white",
+                    fontweight="bold", zorder=5,
+                    path_effects=[pe.withStroke(linewidth=2, foreground="#222222")],
+                )
+
+            if refline is not None:
+                ax.axhline(refline, color="gray", linestyle="--", linewidth=0.8, alpha=0.7)
+
+            ax.set_xticks(x_pos)
+            if row == n_rows - 1:
+                ax.set_xticklabels(labels, fontsize=7.5, rotation=20, ha="right")
+            else:
+                ax.set_xticklabels([])
+
+            if col == 0:
+                ax.set_ylabel(ylabel, fontsize=10)
+            else:
+                ax.tick_params(left=False, labelleft=False)
+            ax.grid(True, axis="y", alpha=0.3, linewidth=0.5)
+
+        axes[0, col].set_title(
+            f"({next(col_labels)}) {ARCHITECTURES[architecture]}",
+            fontsize=11,
         )
 
-    # fig.suptitle("Input feature ablation — LSTM (seed 42, test 2005–2014)", fontsize=11)
     fig.tight_layout()
     return fig
 
@@ -201,7 +223,6 @@ def print_summary(metrics_df: pd.DataFrame) -> None:
     summary = (
         metrics_df.groupby("variant")[["nse", "kge", "rmse", "pbias"]]
         .median()
-        .rename(index=VARIANTS)
         .round(3)
     )
     # Sort by descending median NSE
@@ -220,14 +241,16 @@ def print_summary(metrics_df: pd.DataFrame) -> None:
 def main() -> None:
     print("=== Input Ablation Evaluation ===\n")
 
-    # Load predictions for all variants
+    # Load predictions for all architecture x input-variant combinations
     print("Loading predictions...")
     preds = {}
-    for variant_name in VARIANTS:
-        preds[variant_name] = load_variant_predictions(variant_name)
+    for architecture in ARCHITECTURES:
+        for input_variant in INPUT_VARIANTS:
+            variant_name = f"{architecture}_{input_variant}"
+            preds[variant_name] = load_variant_predictions(variant_name)
 
     # Compute metrics
-    print("\nComputing NSE and KGE...")
+    print("\nComputing NSE, KGE, RMSE, PBIAS...")
     metrics_df = compute_metrics(preds)
 
     # Save metrics
