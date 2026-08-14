@@ -870,11 +870,11 @@ def fig5_bias(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 6 — Peak flow CDF  (2-row × 1-col)
+# Figure 6a — Peak flow CDF  (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def _plot_pooled_event_cdf(ax, obs_vals: list[float], model_vals: dict[str, list[float]],
-                            title: str, xlabel: str, obs_color: str,
+                            title: str, obs_color: str,
                             show_legend: bool = False) -> None:
     """Plot a CDF of pooled peak-event flows: observed + one line per model."""
     legend_handles: list = []
@@ -895,7 +895,6 @@ def _plot_pooled_event_cdf(ax, obs_vals: list[float], model_vals: dict[str, list
                         linewidth=1.2,
                         label=MODEL_LABELS[model_name])
         legend_handles.append(line)
-    ax.set_xlabel(xlabel, fontsize=FONT_SIZE)
     ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
     ax.set_xlim(left=0)
     ax.set_ylim(0, 1.05)
@@ -920,7 +919,7 @@ def _basin_max_peaks(preds: dict, gauge_ids: list[str]
 
 
 def _plot_basin_peak_panel(ax, preds: dict, gauge_ids: list[str], obs_color: str) -> None:
-    """Panel (b): CDF of one highest peak event per basin — shared by fig6 and fig6d."""
+    """Panel (b): CDF of one highest peak event per basin — shared by fig6a and fig6c."""
     obs_basin_peaks, model_basin_peaks = _basin_max_peaks(preds, gauge_ids)
     n_basins = len(obs_basin_peaks)
     ax.set_title(f"(b) One highest peak event per basin (count = {n_basins})",
@@ -937,14 +936,14 @@ def _plot_basin_peak_panel(ax, preds: dict, gauge_ids: list[str], obs_color: str
                 color=COLORS[model_name],
                 linestyle=LINESTYLES[model_name],
                 linewidth=1.2)
-    ax.set_xlabel("Peak flow (mm/day)", fontsize=FONT_SIZE)
+    ax.set_xlabel("Flow (mm/day)", fontsize=FONT_SIZE)
     ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
     ax.set_xlim(left=0)
     ax.set_ylim(0, 1.05)
     ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
 
 
-def fig6_peak_flow(preds: dict) -> None:
+def fig6a_peak_flow(preds: dict) -> None:
     """2-row 1-col peak-flow CDF.
 
     (a) Top 1% peak events pooled across all basins.
@@ -977,24 +976,24 @@ def fig6_peak_flow(preds: dict) -> None:
             top1pct_model[model_name].extend(matched.values.tolist())
 
     # ── Plot ──────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(2, 1, figsize=(4, 5))
+    fig, axes = plt.subplots(2, 1, figsize=(4, 5), sharex=True)
 
     _plot_pooled_event_cdf(
         axes[0], top1pct_obs, top1pct_model,
         title=f"(a) Top 1% peak event across all basins (count = {len(top1pct_obs)})",
-        xlabel="Flow (mm/day)", obs_color=obs_color, show_legend=True)
+        obs_color=obs_color, show_legend=True)
 
     _plot_basin_peak_panel(axes[1], preds, gauge_ids, obs_color)
 
     plt.tight_layout(h_pad=1.2)
-    plt.savefig(FIGURES_DIR / "fig6_peak_flow.png", dpi=DPI, bbox_inches="tight")
-    plt.savefig(FIGURES_DIR / "fig6_peak_flow.svg", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6a_peak_flow.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6a_peak_flow.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
-    print("Saved fig6_peak_flow.png")
+    print("Saved fig6a_peak_flow.png")
 
 
 # ---------------------------------------------------------------------------
-# Figure 6b — Annual peak flow bias CDF (single panel)
+# Figure 6b — Peak flow bias CDF (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def _annual_peak_flow_bias(preds: dict) -> dict[str, list[float]]:
@@ -1003,7 +1002,7 @@ def _annual_peak_flow_bias(preds: dict) -> dict[str, list[float]]:
     For each basin and each calendar year in the test period, the annual
     maximum observed and simulated flow are compared independently (the
     standard annual-maximum-series peak flow bias used in flood studies,
-    as opposed to date-matched event bias in fig6).
+    as opposed to date-matched event bias in fig6a).
     """
     gauge_ids = list(preds["lstm"].keys())
 
@@ -1021,13 +1020,31 @@ def _annual_peak_flow_bias(preds: dict) -> dict[str, list[float]]:
     return bias_by_model
 
 
-def fig6b_annual_peak_flow(preds: dict) -> None:
-    """Single-panel CDF of annual peak flow bias (%), pooled across basin-years."""
-    bias_by_model = _annual_peak_flow_bias(preds)
+def _basin_peak_bias(preds: dict, gauge_ids: list[str]) -> dict[str, list[float]]:
+    """Per-model list of bias (%) of the single highest peak per basin.
 
-    fig, ax = plt.subplots(1, 1, figsize=(6.3, 3.5))
+    Same independent-extrema convention as _basin_max_peaks (obs and sim
+    peaks are each basin's own max over the whole test period, not
+    date-matched), expressed as a bias ratio and pooled across basins.
+    """
+    obs_basin_peaks, model_basin_peaks = _basin_max_peaks(preds, gauge_ids)
+
+    bias_by_model: dict[str, list[float]] = {}
+    for model_name, sim_peaks in model_basin_peaks.items():
+        n = min(len(sim_peaks), len(obs_basin_peaks))
+        obs = obs_basin_peaks[:n]
+        sim = sim_peaks[:n]
+        mask = obs > 0
+        bias_by_model[model_name] = ((sim[mask] - obs[mask]) / obs[mask] * 100).tolist()
+    return bias_by_model
+
+
+def _plot_bias_cdf(ax, bias_by_model: dict[str, list[float]], title: str,
+                    show_legend: bool = False) -> tuple[float, float]:
+    """Plot a CDF of % bias values, one line per model. Returns pooled (min, max)."""
     handles = []
     all_vals: list[float] = []
+    ax.set_title(title, fontsize=TITLE_SIZE, loc="left", pad=4)
 
     for model_name in DISPLAY_ORDER:
         vals = bias_by_model.get(model_name, [])
@@ -1036,98 +1053,71 @@ def fig6b_annual_peak_flow(preds: dict) -> None:
         arr = np.array(vals)
         all_vals.extend(vals)
         vals_sorted, probs = _cdf(arr)
-        median_val = float(np.median(arr))
-        lbl = f"{MODEL_LABELS[model_name]} (med={median_val:+.0f}%)"
         line, = ax.plot(vals_sorted, probs,
                         color=COLORS[model_name],
                         linestyle=LINESTYLES[model_name],
-                        linewidth=1.3, label=lbl)
+                        linewidth=1.3, label=MODEL_LABELS[model_name])
         handles.append(line)
-
-    all_arr = np.array(all_vals)
-    x_lo = min(np.percentile(all_arr, 1), -5)
-    x_hi = max(np.percentile(all_arr, 99), 5)
-    pad = 0.05 * (x_hi - x_lo)
 
     ax.axvline(0, color="#999999", linestyle=":", linewidth=0.9, zorder=1)
-    ax.set_xlim(x_lo - pad, x_hi + pad)
-    ax.set_ylim(0, 1)
-    ax.set_xlabel("Annual peak flow bias (%)", fontsize=FONT_SIZE)
     ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.set_ylim(0, 1.05)
     ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
-    ax.legend(handles=handles, loc="center left", bbox_to_anchor=(1.02, 0.5),
-              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
+    if show_legend:
+        ax.legend(handles=handles, loc="lower right",
+                  **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
 
-    plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "fig6b_annual_peak_flow.png", dpi=DPI, bbox_inches="tight")
-    plt.savefig(FIGURES_DIR / "fig6b_annual_peak_flow.svg", dpi=DPI, bbox_inches="tight")
-    plt.close()
-    print("Saved fig6b_annual_peak_flow.png")
+    return (min(all_vals), max(all_vals)) if all_vals else (0.0, 0.0)
 
 
-# ---------------------------------------------------------------------------
-# Figure 6c — Annual peak flow |bias| CDF (single panel, easier to read)
-# ---------------------------------------------------------------------------
+def fig6b_annual_peak_flow_bias(preds: dict) -> None:
+    """2-row 1-col CDF of peak flow bias (%).
 
-def fig6c_annual_peak_flow_abs(preds: dict) -> None:
-    """Single-panel CDF of |annual peak flow bias| (%).
-
-    Same underlying values as fig6b, but folded to absolute magnitude —
-    every curve now starts at (0, 0) and rises monotonically, so it reads
-    more easily at a glance. This trades away over- vs under-prediction
-    direction (see fig6b for that) in exchange for legibility: curves
-    further left/steeper mean tighter, more consistent peak magnitude
-    errors regardless of sign.
+    (a) Annual peak flow bias, pooled across basin-years.
+    (b) Bias of the single highest peak per basin, pooled across basins.
     """
-    bias_by_model = _annual_peak_flow_bias(preds)
+    gauge_ids = list(preds["lstm"].keys())
+    bias_annual = _annual_peak_flow_bias(preds)
+    bias_basin_peak = _basin_peak_bias(preds, gauge_ids)
 
-    fig, ax = plt.subplots(1, 1, figsize=(4.5, 3.5))
-    handles = []
-    all_vals: list[float] = []
+    n_annual = len(bias_annual.get("lstm", []))
+    n_basins = len(bias_basin_peak.get("lstm", []))
 
-    for model_name in DISPLAY_ORDER:
-        vals = bias_by_model.get(model_name, [])
-        if not vals:
-            continue
-        arr = np.abs(np.array(vals))
-        all_vals.extend(arr.tolist())
-        vals_sorted, probs = _cdf(arr)
-        median_val = float(np.median(arr))
-        lbl = f"{MODEL_LABELS[model_name]} (med={median_val:.0f}%)"
-        line, = ax.plot(vals_sorted, probs,
-                        color=COLORS[model_name],
-                        linestyle=LINESTYLES[model_name],
-                        linewidth=1.3, label=lbl)
-        handles.append(line)
+    fig, axes = plt.subplots(2, 1, figsize=(4, 5), sharex=True)
 
-    x_hi = max(np.percentile(np.array(all_vals), 99), 5)
+    lo_a, hi_a = _plot_bias_cdf(
+        axes[0], bias_annual,
+        title=f"(a) Annual peak flow bias (count = {n_annual})",
+        show_legend=True)
+    lo_b, hi_b = _plot_bias_cdf(
+        axes[1], bias_basin_peak,
+        title=f"(b) Highest peak bias per basin (count = {n_basins})",
+        show_legend=False)
 
-    ax.set_xlim(0, x_hi * 1.05)
-    ax.set_ylim(0, 1)
-    ax.set_xlabel("|Annual peak flow bias| (%)", fontsize=FONT_SIZE)
-    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
-    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
-    ax.legend(handles=handles, loc="lower right",
-              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
+    x_lo = min(lo_a, lo_b, -5)
+    x_hi = max(hi_a, hi_b, 5)
+    pad = 0.05 * (x_hi - x_lo)
+    axes[1].set_xlim(x_lo - pad, x_hi + pad)
+    axes[1].set_xlabel("Annual peak flow bias (%)", fontsize=FONT_SIZE)
 
     plt.tight_layout()
-    plt.savefig(FIGURES_DIR / "fig6c_annual_peak_flow_abs.png", dpi=DPI, bbox_inches="tight")
-    plt.savefig(FIGURES_DIR / "fig6c_annual_peak_flow_abs.svg", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6b_annual_peak_flow_bias.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6b_annual_peak_flow_bias.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
-    print("Saved fig6c_annual_peak_flow_abs.png")
+    print("Saved fig6b_annual_peak_flow_bias.png")
 
 
 # ---------------------------------------------------------------------------
-# Figure 6d — Peak flow CDF, annual peaks instead of top 1% (2-row × 1-col)
+# Figure 6c — Peak flow CDF, annual peaks instead of top 1% (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
-def fig6d_annual_peak_flow(preds: dict) -> None:
-    """Same layout as fig6, but panel (a) uses annual peaks instead of top 1%.
+def fig6c_annual_peak_flow(preds: dict) -> None:
+    """Same layout as fig6a, but panel (a) uses annual peaks instead of top 1%.
 
     (a) Observed annual peak flow (one per basin-year), pooled across all
         basins, matched to each model's simulated flow on the same date.
     (b) One highest peak event (max over the whole test period) per basin —
-        identical to fig6 panel (b).
+        identical to fig6a panel (b).
     """
     gauge_ids = list(preds["lstm"].keys())
     obs_color = "#333333"
@@ -1150,20 +1140,20 @@ def fig6d_annual_peak_flow(preds: dict) -> None:
             annual_model[model_name].extend(matched.values.tolist())
 
     # ── Plot ──────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(2, 1, figsize=(4, 5))
+    fig, axes = plt.subplots(2, 1, figsize=(4, 5), sharex=True)
 
     _plot_pooled_event_cdf(
         axes[0], annual_obs, annual_model,
         title=f"(a) Annual peak flow across all basins (count = {len(annual_obs)})",
-        xlabel="Flow (mm/day)", obs_color=obs_color, show_legend=True)
+        obs_color=obs_color, show_legend=True)
 
     _plot_basin_peak_panel(axes[1], preds, gauge_ids, obs_color)
 
     plt.tight_layout(h_pad=1.2)
-    plt.savefig(FIGURES_DIR / "fig6d_annual_peak_flow.png", dpi=DPI, bbox_inches="tight")
-    plt.savefig(FIGURES_DIR / "fig6d_annual_peak_flow.svg", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6c_annual_peak_flow.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6c_annual_peak_flow.svg", dpi=DPI, bbox_inches="tight")
     plt.close()
-    print("Saved fig6d_annual_peak_flow.png")
+    print("Saved fig6c_annual_peak_flow.png")
 
 
 # ---------------------------------------------------------------------------
@@ -1588,10 +1578,9 @@ def main() -> None:
     fig4b_boxplot_metrics(metrics_df)
     fig4c_nse_heatmap(metrics_df)
     fig5_bias(metrics_df)
-    fig6_peak_flow(preds)
-    fig6b_annual_peak_flow(preds)
-    fig6c_annual_peak_flow_abs(preds)
-    fig6d_annual_peak_flow(preds)
+    fig6a_peak_flow(preds)
+    fig6b_annual_peak_flow_bias(preds)
+    fig6c_annual_peak_flow(preds)
     fig7_nse_maps(metrics_df)
     fig8_loss_curves()
     fig9_basin_properties(metrics_df)
