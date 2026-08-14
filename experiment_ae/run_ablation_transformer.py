@@ -3,23 +3,31 @@ experiment_ae/run_ablation_transformer.py
 
 Input feature ablation experiment for Transformer.
 
-Trains three Transformer variants with seed=42 (single seed — sufficient for a
-comparison experiment), mirroring experiment_ae/run_ablation.py's LSTM ablation:
+Trains two Transformer variants, each across every seed in the run mode's
+seed list (SEEDS[mode]), then averages predictions across seeds — mirroring
+how the main pipeline (02_run_transformer.py + run_all.py) produces its
+seed-averaged result. Mirrors experiment_ae/run_ablation.py's LSTM ablation:
 
-  A) transformer_dynamic      — 2 features: temperature + precipitation
-  B) transformer_static       — 18 features: dynamic + existing 16 static attrs
-  C) transformer_alphaearth   — 2 + emb_dim features: dynamic + AlphaEarth embeddings
+  A) transformer_dynamic   — 2 features: temperature + precipitation
+  B) transformer_static    — 18 features: dynamic + existing 16 static attrs
+
+A third variant, "dynamic + AlphaEarth embeddings", is intentionally NOT
+retrained here: it is feature-for-feature and hyperparameter-for-hyperparameter
+identical to the main pipeline's production `transformer` model (both train on
+ALL_FEATURES = DYNAMIC_FEATURES + AE_FEATURES). Retraining it separately would
+only add fresh GPU non-determinism noise without changing what it represents —
+this matters more for Transformer than LSTM, since Transformer training on GPU
+is not bit-reproducible run-to-run even with a fixed seed. So
+evaluate_ablation.py instead reuses the already seed-averaged
+output/predictions/transformer/*_mean.parquet produced by the main pipeline.
 
 Everything else (architecture, hyperparameters, train/val/test split) is
 identical to 02_run_transformer.py. Predictions are saved in the same format
-as run_ablation.py so evaluate_ablation.py can compare all six variants.
-
-Prerequisite: run preprocessing/05_get_alphaearth_embeddings.py first to
-produce input/alphaearth_embeddings.parquet.
+as run_ablation.py so evaluate_ablation.py can compare all variants.
 
 Usage:
-    python experiment_ae/run_ablation_transformer.py                  # production
-    python experiment_ae/run_ablation_transformer.py --mode dev       # fast smoke-test
+    python experiment_ae/run_ablation_transformer.py                  # production: 5 seeds
+    python experiment_ae/run_ablation_transformer.py --mode dev       # fast smoke-test: 1 seed
 """
 
 from __future__ import annotations
@@ -48,18 +56,16 @@ from shared.dataset import (
     build_concat_dataset,
     fit_and_save_scaler,
 )
-from shared.hyperparameters import get_hyperparams, SPLIT_DATES
+from shared.hyperparameters import DEV_SEEDS, PROD_SEEDS, get_hyperparams, SPLIT_DATES
 from shared.models import build_transformer_model
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
-INPUT_DIR      = Path("input")
-MODEL_DIR      = Path("output/model")
-EMBEDDINGS_PATH = INPUT_DIR / "alphaearth_embeddings.parquet"
-SEED           = 42
-
+INPUT_DIR = Path("input")
+MODEL_DIR = Path("output/model")
+PRED_BASE = Path("output/predictions")
 
 
 # ---------------------------------------------------------------------------
@@ -74,32 +80,6 @@ def load_gauge_dfs(input_dir: Path) -> dict[str, pd.DataFrame]:
         df["date"] = pd.to_datetime(df["date"])
         gauge_dfs[gauge_id] = df
     return gauge_dfs
-
-
-def attach_alphaearth(gauge_dfs: dict[str, pd.DataFrame]) -> tuple[dict[str, pd.DataFrame], list[str]]:
-    """Join AlphaEarth embedding columns into each gauge's DataFrame.
-
-    Returns the updated gauge_dfs and the list of embedding column names.
-    """
-    emb_df = pd.read_parquet(EMBEDDINGS_PATH)
-    emb_df["gauge_id"] = emb_df["gauge_id"].astype(str)
-    emb_cols = [c for c in emb_df.columns if c.startswith("emb_")]
-
-    updated = {}
-    for gauge_id, df in gauge_dfs.items():
-        row = emb_df[emb_df["gauge_id"] == gauge_id]
-        if row.empty:
-            raise ValueError(
-                f"gauge_id '{gauge_id}' not found in {EMBEDDINGS_PATH}. "
-                "Re-run preprocessing/05_get_alphaearth_embeddings.py."
-            )
-        emb_vals = row[emb_cols].iloc[0]
-        df = df.copy()
-        for col in emb_cols:
-            df[col] = emb_vals[col]
-        updated[gauge_id] = df
-
-    return updated, emb_cols
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +122,7 @@ def run_inference(model, loader, device) -> tuple[np.ndarray, np.ndarray]:
 
 
 # ---------------------------------------------------------------------------
-# Single-variant training
+# Single-variant, single-seed training
 # ---------------------------------------------------------------------------
 
 def train_variant(
@@ -150,15 +130,16 @@ def train_variant(
     feature_cols: list[str],
     gauge_dfs: dict[str, pd.DataFrame],
     device: torch.device,
+    seed: int,
     mode: str = "dev",
 ) -> None:
     mode_tag = f" [{mode.upper()}]"
     print(f"\n{'='*60}")
-    print(f"Variant: {variant_name}  |  features: {len(feature_cols)}  |  seed: {SEED}{mode_tag}")
+    print(f"Variant: {variant_name}  |  features: {len(feature_cols)}  |  seed: {seed}{mode_tag}")
     print(f"{'='*60}")
 
-    torch.manual_seed(SEED)
-    np.random.seed(SEED)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
     hp = get_hyperparams(mode)["transformer"]
     seq_len    = hp["seq_len"]
@@ -168,9 +149,9 @@ def train_variant(
     lr         = hp["learning_rate"]
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    model_path = MODEL_DIR / f"{variant_name}_seed{SEED}_best.pt"
+    model_path = MODEL_DIR / f"{variant_name}_seed{seed}_best.pt"
     scaler_path = MODEL_DIR / f"scaler_{variant_name}.pkl"
-    pred_dir   = Path("output/predictions") / variant_name / f"seed{SEED}"
+    pred_dir   = PRED_BASE / variant_name / f"seed{seed}"
     pred_dir.mkdir(parents=True, exist_ok=True)
 
     # -- Build combined training DataFrame for scaler fitting -----------------
@@ -191,6 +172,8 @@ def train_variant(
     ].reset_index(drop=True)
 
     # -- Fit scaler on training data only -------------------------------------
+    # Deterministic (StandardScaler has no randomness), so re-fitting per seed
+    # is harmless — every seed writes back the same values.
     print("Fitting scaler...")
     scaler = fit_and_save_scaler(train_df, scaler_path, feature_cols=feature_cols)
 
@@ -268,7 +251,7 @@ def train_variant(
         "epoch": range(1, len(train_losses) + 1),
         "train_loss": train_losses,
         "val_loss": val_losses,
-    }).to_parquet(MODEL_DIR / f"{variant_name}_seed{SEED}_loss_curves.parquet", index=False)
+    }).to_parquet(MODEL_DIR / f"{variant_name}_seed{seed}_loss_curves.parquet", index=False)
 
     # -- Per-gauge inference --------------------------------------------------
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -295,7 +278,53 @@ def train_variant(
         out_df.to_parquet(out_path, index=False)
         print(f"  {gauge_id}: {len(out_df)} rows")
 
-    print(f"\nVariant '{variant_name}' complete.")
+    print(f"\nVariant '{variant_name}' (seed {seed}) complete.")
+
+
+# ---------------------------------------------------------------------------
+# Cross-seed aggregation (mirrors run_all.py's aggregate_predictions)
+# ---------------------------------------------------------------------------
+
+def aggregate_variant_predictions(variant_name: str, seeds: list[int]) -> None:
+    """Average per-seed qsim predictions across seeds; write *_mean.parquet
+    files to the top-level output/predictions/{variant_name}/ directory.
+
+    qobs is taken from the first seed since it is data-derived, not
+    model-derived, and therefore identical across seeds.
+    """
+    pred_base = PRED_BASE / variant_name
+    first_seed_dir = pred_base / f"seed{seeds[0]}"
+    if not first_seed_dir.exists():
+        print(f"  Warning: {first_seed_dir} not found — skipping aggregation for {variant_name}")
+        return
+
+    gauge_files = sorted(first_seed_dir.glob("*.parquet"))
+    for gauge_file in gauge_files:
+        seed_dfs = []
+        for seed in seeds:
+            seed_path = pred_base / f"seed{seed}" / gauge_file.name
+            if seed_path.exists():
+                seed_dfs.append(pd.read_parquet(seed_path))
+            else:
+                print(f"  Warning: missing {seed_path}")
+
+        if not seed_dfs:
+            continue
+
+        if len(seed_dfs) == 1:
+            merged = seed_dfs[0].copy()
+        else:
+            non_sim_cols = [c for c in seed_dfs[0].columns if c != "qsim"]
+            merged = seed_dfs[0][non_sim_cols].copy()
+            qsim_stack = np.stack(
+                [df.set_index("date")["qsim"].values for df in seed_dfs], axis=0
+            )
+            merged["qsim"] = qsim_stack.mean(axis=0)
+
+        out_path = pred_base / gauge_file.name.replace(".parquet", "_mean.parquet")
+        merged.to_parquet(out_path, index=False)
+
+    print(f"  {variant_name}: {len(gauge_files)} gauges aggregated across {len(seeds)} seed(s)")
 
 
 # ---------------------------------------------------------------------------
@@ -310,33 +339,27 @@ def main(mode: str = "dev") -> None:
         else (DEVICE if DEVICE != "auto" else "cpu")
     )
     device = torch.device(device_str)
-    print(f"Device: {device} | mode={mode}")
+    seeds = PROD_SEEDS if mode == "production" else DEV_SEEDS
+    print(f"Device: {device} | mode={mode} | seeds={seeds}")
 
     # Load base gauge DataFrames (dynamic + static columns)
     print("\nLoading gauge data...")
     base_gauge_dfs = load_gauge_dfs(INPUT_DIR)
     print(f"  {len(base_gauge_dfs)} gauges loaded")
 
-    # Load AlphaEarth embeddings and attach to gauge DataFrames
-    if not EMBEDDINGS_PATH.exists():
-        print(
-            f"\nERROR: {EMBEDDINGS_PATH} not found.\n"
-            "Run preprocessing/05_get_alphaearth_embeddings.py first."
-        )
-        raise SystemExit(1)
-
-    ae_gauge_dfs, ae_cols = attach_alphaearth(base_gauge_dfs)
-    print(f"  AlphaEarth embeddings: {len(ae_cols)} dimensions")
-
-    # Define the three variants
+    # Define the two variants actually trained here.
+    # ("dynamic + AlphaEarth" is not retrained — see module docstring; it is
+    # identical to the main pipeline's production `transformer` model, so
+    # evaluate_ablation.py reuses output/predictions/transformer/*_mean.parquet.)
     variants = {
-        "transformer_dynamic":    (DYNAMIC_FEATURES,              base_gauge_dfs),
-        "transformer_static":     (DYNAMIC_FEATURES + STATIC_FEATURES, base_gauge_dfs),
-        "transformer_alphaearth": (DYNAMIC_FEATURES + ae_cols,    ae_gauge_dfs),
+        "transformer_dynamic": (DYNAMIC_FEATURES,                   base_gauge_dfs),
+        "transformer_static":  (DYNAMIC_FEATURES + STATIC_FEATURES, base_gauge_dfs),
     }
 
     for variant_name, (feature_cols, gauge_dfs) in variants.items():
-        train_variant(variant_name, feature_cols, gauge_dfs, device, mode=mode)
+        for seed in seeds:
+            train_variant(variant_name, feature_cols, gauge_dfs, device, seed=seed, mode=mode)
+        aggregate_variant_predictions(variant_name, seeds)
 
     print("\n=== All variants complete. Run experiment_ae/evaluate_ablation.py next. ===")
 
@@ -345,7 +368,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Input ablation Transformer experiment")
     parser.add_argument(
         "--mode", choices=["dev", "production"], default="dev",
-        help="Hyperparameter profile: 'dev' (default, fast smoke-test) or 'production' (full run)",
+        help="Hyperparameter profile: 'dev' (default, fast smoke-test, 1 seed) "
+             "or 'production' (full run, 5 seeds)",
     )
     args = parser.parse_args()
     main(mode=args.mode)

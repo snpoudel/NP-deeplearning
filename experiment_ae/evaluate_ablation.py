@@ -5,26 +5,40 @@ Evaluate the input-feature ablation for both LSTM and Transformer and produce
 a 2x3 boxplot figure comparing NSE, PBIAS, and HFB (high-flow bias) across the
 15 Nepal basins.
 
-Reads predictions written by experiment_ae/run_ablation.py (LSTM) and
-experiment_ae/run_ablation_transformer.py (Transformer):
-    output/predictions/lstm_dynamic/seed42/
-    output/predictions/lstm_static/seed42/
-    output/predictions/lstm_alphaearth/seed42/
-    output/predictions/transformer_dynamic/seed42/
-    output/predictions/transformer_static/seed42/
-    output/predictions/transformer_alphaearth/seed42/
+Default output uses seed 42. Predictions are read from
+experiment_ae/run_ablation.py (LSTM) and
+experiment_ae/run_ablation_transformer.py (Transformer)'s seed42 output:
+    output/predictions/lstm_dynamic/seed42/*.parquet
+    output/predictions/lstm_static/seed42/*.parquet
+    output/predictions/transformer_dynamic/seed42/*.parquet
+    output/predictions/transformer_static/seed42/*.parquet
 
-Outputs:
+The "alphaearth" variant is not trained separately — it is identical to the
+main pipeline's production lstm/transformer model (same features, same
+hyperparameters), so its numbers are read directly from the main pipeline's
+own seed42 output instead of a redundant re-run:
+    output/predictions/lstm/seed42/*.parquet
+    output/predictions/transformer/seed42/*.parquet
+
+Outputs (default, seed 42):
     output/figures/fig_input_ablation_cdf.png
     output/figures/fig_input_ablation_cdf.svg
+    output/metrics_input_ablation.parquet
     Printed table of median NSE, KGE, RMSE, PBIAS, HFB per variant.
+
+Pass --seed N to plot a different single seed instead (output goes to a
+_seedN-suffixed file). Pass --mean to plot the 5-seed mean instead (output
+goes to a _mean-suffixed file).
 
 Usage:
     python experiment_ae/evaluate_ablation.py
+    python experiment_ae/evaluate_ablation.py --seed 123
+    python experiment_ae/evaluate_ablation.py --mean
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -42,8 +56,6 @@ from shared.metrics import kge, nse, pbias, rmse
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-
-SEED = 42
 
 ARCHITECTURES = {
     "lstm":        "LSTM",
@@ -73,9 +85,8 @@ TEST_END    = pd.Timestamp(SPLIT_DATES["test"][1])
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_variant_predictions(variant_name: str) -> dict[str, pd.DataFrame]:
-    """Load test-period predictions for one variant, keyed by gauge_id."""
-    pred_dir = PRED_BASE / variant_name / f"seed{SEED}"
+def _load_mean_predictions(pred_dir: Path, file_stem: str) -> dict[str, pd.DataFrame]:
+    """Load seed-averaged (*_mean.parquet) test-period predictions, keyed by gauge_id."""
     if not pred_dir.exists():
         raise FileNotFoundError(
             f"Prediction directory not found: {pred_dir}\n"
@@ -84,9 +95,9 @@ def load_variant_predictions(variant_name: str) -> dict[str, pd.DataFrame]:
         )
 
     preds = {}
-    for path in sorted(pred_dir.glob(f"nepal_*_{variant_name}.parquet")):
+    for path in sorted(pred_dir.glob(f"nepal_*_{file_stem}_mean.parquet")):
         gauge_id = re.sub(
-            rf"^nepal_|_{re.escape(variant_name)}\.parquet$", "", path.name
+            rf"^nepal_|_{re.escape(file_stem)}_mean\.parquet$", "", path.name
         )
         df = pd.read_parquet(path)
         df["date"] = pd.to_datetime(df["date"])
@@ -94,7 +105,52 @@ def load_variant_predictions(variant_name: str) -> dict[str, pd.DataFrame]:
         if len(df) > 0:
             preds[gauge_id] = df
 
-    print(f"  {variant_name}: {len(preds)} gauges loaded")
+    return preds
+
+
+def _load_single_seed_predictions(pred_dir: Path, file_stem: str, seed: int) -> dict[str, pd.DataFrame]:
+    """Load one seed's (not averaged) test-period predictions, keyed by gauge_id."""
+    seed_dir = pred_dir / f"seed{seed}"
+    if not seed_dir.exists():
+        raise FileNotFoundError(f"Seed directory not found: {seed_dir}")
+
+    preds = {}
+    for path in sorted(seed_dir.glob(f"nepal_*_{file_stem}.parquet")):
+        gauge_id = re.sub(rf"^nepal_|_{re.escape(file_stem)}\.parquet$", "", path.name)
+        df = pd.read_parquet(path)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df[(df["date"] >= TEST_START) & (df["date"] <= TEST_END)].reset_index(drop=True)
+        if len(df) > 0:
+            preds[gauge_id] = df
+
+    return preds
+
+
+def load_variant_predictions(
+    architecture: str, input_variant: str, seed: int | None = None
+) -> dict[str, pd.DataFrame]:
+    """Load test-period predictions for one variant, keyed by gauge_id.
+
+    "dynamic" and "static" come from this experiment's own multi-seed ablation
+    run; "alphaearth" is read straight from the main pipeline's production
+    model, since the two are identical by construction (see module docstring).
+
+    If seed is given, loads that single seed's raw predictions instead of the
+    5-seed mean (from the same directories either way).
+    """
+    if input_variant == "alphaearth":
+        pred_dir = PRED_BASE / architecture
+        file_stem = architecture
+    else:
+        pred_dir = PRED_BASE / f"{architecture}_{input_variant}"
+        file_stem = f"{architecture}_{input_variant}"
+
+    if seed is None:
+        preds = _load_mean_predictions(pred_dir, file_stem)
+    else:
+        preds = _load_single_seed_predictions(pred_dir, file_stem, seed)
+
+    print(f"  {architecture}_{input_variant}: {len(preds)} gauges loaded (from {pred_dir})")
     return preds
 
 
@@ -238,8 +294,9 @@ def print_summary(metrics_df: pd.DataFrame) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    print("=== Input Ablation Evaluation ===\n")
+def main(seed: int | None = 42) -> None:
+    tag = " (5-seed mean)" if seed is None else f" (seed {seed} only)"
+    print(f"=== Input Ablation Evaluation{tag} ===\n")
 
     # Load predictions for all architecture x input-variant combinations
     print("Loading predictions...")
@@ -247,14 +304,20 @@ def main() -> None:
     for architecture in ARCHITECTURES:
         for input_variant in INPUT_VARIANTS:
             variant_name = f"{architecture}_{input_variant}"
-            preds[variant_name] = load_variant_predictions(variant_name)
+            preds[variant_name] = load_variant_predictions(architecture, input_variant, seed=seed)
 
     # Compute metrics
     print("\nComputing NSE, KGE, RMSE, PBIAS...")
     metrics_df = compute_metrics(preds)
 
     # Save metrics
-    metrics_path = Path("output") / "metrics_input_ablation.parquet"
+    if seed is None:
+        suffix = "_mean"
+    elif seed == 42:
+        suffix = ""
+    else:
+        suffix = f"_seed{seed}"
+    metrics_path = Path("output") / f"metrics_input_ablation{suffix}.parquet"
     metrics_df.to_parquet(metrics_path, index=False)
     print(f"Metrics saved to {metrics_path}")
 
@@ -266,7 +329,7 @@ def main() -> None:
     fig = plot_boxplots(metrics_df)
 
     for ext in ("png", "svg"):
-        out = FIGURES_DIR / f"fig_input_ablation_cdf.{ext}"
+        out = FIGURES_DIR / f"fig_input_ablation_cdf{suffix}.{ext}"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         print(f"\nFigure saved to {out}")
 
@@ -275,4 +338,16 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Evaluate the input-feature ablation")
+    parser.add_argument(
+        "--seed", type=int, default=42,
+        help="Which single seed's predictions to plot (default: 42). "
+             "Non-42 values are written to a _seedN-suffixed file.",
+    )
+    parser.add_argument(
+        "--mean", action="store_true",
+        help="Plot the 5-seed mean instead of a single seed. "
+             "Output goes to a _mean-suffixed file.",
+    )
+    args = parser.parse_args()
+    main(seed=None if args.mean else args.seed)
