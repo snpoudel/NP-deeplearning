@@ -60,7 +60,6 @@ run_all.py                   # orchestrator: train all models → aggregate acro
 05_run_glofas_transformer.py # GloFAS residual-correction Transformer
 06_run_grfr_transformer.py   # GRFR residual-correction Transformer
 07_evaluate.py               # all evaluation figures (fig1–fig9)
-08_residual_analysis.py      # post-processor residual analysis figures
 ```
 
 ## Setup

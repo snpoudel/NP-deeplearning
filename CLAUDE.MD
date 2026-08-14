@@ -21,7 +21,6 @@ run_all.py                   # orchestrator: train → aggregate → evaluate
 05_run_glofas_transformer.py # GloFAS residual-correction Transformer
 06_run_grfr_transformer.py   # GRFR residual-correction Transformer
 07_evaluate.py               # evaluation figures (fig1–fig9)
-08_residual_analysis.py      # residual analysis figures
 ```
 
 ## Data splits
