@@ -1,16 +1,16 @@
 station,river,location,elevation_m,drainage_area_km2,lat,lon
 120.0,Chamelia,Nayalbadi,685,1150.0,29.6722,80.5583
 259.2,Seti,Gopaghat,750,4420.0,29.3,80.775
-260.0,Seti,Bangga,328,7460.0,28.9778,81.1444
+260.0,West Seti,Banga,328,7460.0,28.9778,81.1444
 289.95,Babai,Chepang,325,2557.0,28.3511,81.7206
 375.0,Rapti,Kusum,235,5200.0,28.0006,82.1161
 406.5,Modikhola,Nayapul,701,601.0,28.2542,83.7242
 438.0,Madi,Shisaghat,457,858.0,28.1,84.2333
 439.7,Marshyandi,Bimalnagar,354,3774.0,27.95,84.43
-445.0,Burhi Gandaki,Arughat,485,4270.0,28.0436,84.8164
+445.0,Budhigandaki,Arughat,485,4270.0,28.0436,84.8164
 447.0,Trishuli,Betrawati,600,4110.0,27.9689,85.1833
 589.0,Bagmati,Padharadovan,180,2700.0,27.1517,85.4917
-610.0,Bhotekosi,Barbise,840,2410.0,27.7883,85.8986
+610.0,Bhotekosi,Barhabise,840,2410.0,27.7883,85.8986
 630.0,Sunkosi,Pachuwarghat,602,4920.0,27.5583,85.7528
 670.0,Dudhakosi,Rabuwabazar,460,4100.0,27.2706,86.6672
 690.0,Tamur,Mulghat,276,5640.0,26.9306,87.3292
