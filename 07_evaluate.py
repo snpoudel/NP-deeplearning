@@ -257,6 +257,21 @@ def _cdf(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 _COUNTRY_CACHE = Path("input/shapefile/cache/ne_50m_admin_0_countries.zip")
 _COUNTRY_URL   = "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_countries.zip"
+_NEPAL_SHAPEFILE = Path("input/shapefile/nepal.shp")
+
+
+def _load_nepal_boundary() -> gpd.GeoDataFrame | None:
+    """Load the user-supplied Nepal outline shapefile."""
+    if not _NEPAL_SHAPEFILE.exists():
+        return None
+    try:
+        gdf = gpd.read_file(str(_NEPAL_SHAPEFILE))
+        if gdf.crs and not gdf.crs.is_geographic:
+            gdf = gdf.to_crs(epsg=4326)
+        return gdf
+    except Exception as exc:
+        print(f"  Warning: could not open Nepal shapefile — {exc}")
+        return None
 
 
 def _load_country_boundaries() -> gpd.GeoDataFrame | None:
@@ -330,11 +345,6 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
         clip = countries.cx[xlim[0]:xlim[1], ylim[0]:ylim[1]]
         clip.plot(ax=ax_map, facecolor="none", edgecolor="#888888", linewidth=0.4, zorder=2)
         if name_col:
-            nepal = countries[countries[name_col] == "Nepal"]
-            if len(nepal) > 0:
-                nepal.plot(ax=ax_map, facecolor="none", edgecolor="#333333",
-                           linewidth=1.2, zorder=3)
-        if name_col:
             area_threshold = (xlim[1] - xlim[0]) * (ylim[1] - ylim[0]) * 0.01
             for _, row in clip.iterrows():
                 if row.geometry.area < area_threshold:
@@ -346,6 +356,11 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
                             style="italic", zorder=7,
                             bbox=dict(boxstyle="round,pad=0.1", facecolor="white",
                                       alpha=0.55, edgecolor="none"))
+
+    nepal_boundary = _load_nepal_boundary()
+    if nepal_boundary is not None:
+        nepal_boundary.plot(ax=ax_map, facecolor="none", edgecolor="#333333",
+                             linewidth=1.2, zorder=3)
 
     basins_gdf.plot(ax=ax_map, facecolor="none", edgecolor="#1A5276",
                     linewidth=1, zorder=4)
@@ -728,7 +743,12 @@ def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
             if gid in sub.index:
                 nse_matrix[si, mi] = sub[gid]
 
-    site_lbls  = [SITE_LABELS.get(gid, f"Site {gid}") for gid in gauge_ids]
+    # Bottom row: per-model median NSE across all sites
+    median_row = np.nanmedian(nse_matrix, axis=0, keepdims=True)
+    nse_matrix = np.vstack([nse_matrix, median_row])
+    n_rows = n_sites + 1
+
+    site_lbls  = [SITE_LABELS.get(gid, f"Site {gid}") for gid in gauge_ids] + ["Median"]
     model_lbls = [MODEL_LABELS[m] for m in DISPLAY_ORDER]
 
     vmin = max(float(np.nanmin(nse_matrix)), -0.5)
@@ -744,11 +764,11 @@ def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
     # White cell borders
     for x in np.arange(-0.5, n_models, 1):
         ax.axvline(x, color="white", linewidth=1.0, zorder=3)
-    for y in np.arange(-0.5, n_sites, 1):
+    for y in np.arange(-0.5, n_rows, 1):
         ax.axhline(y, color="white", linewidth=1.0, zorder=3)
 
     # Annotate cells with NSE value; contrast text colour against background
-    for si in range(n_sites):
+    for si in range(n_rows):
         for mi in range(n_models):
             val = nse_matrix[si, mi]
             if np.isnan(val):
@@ -767,10 +787,14 @@ def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
     for sep_x in [1.5, 4.5]:
         ax.axvline(sep_x, color="#444444", linewidth=2.0, zorder=5)
 
+    # Thicker separator above the summary median row
+    ax.axhline(n_sites - 0.5, color="#444444", linewidth=2.0, zorder=5)
+
     ax.set_xticks(range(n_models))
     ax.set_xticklabels(model_lbls, rotation=35, ha="right", fontsize=FONT_SIZE)
-    ax.set_yticks(range(n_sites))
+    ax.set_yticks(range(n_rows))
     ax.set_yticklabels(site_lbls, fontsize=FONT_SIZE - 0.5)
+    ax.get_yticklabels()[-1].set_fontweight("bold")
     ax.tick_params(length=0)
     # ax.set_title("NSE — all models × all sites", fontsize=TITLE_SIZE,
     #              loc="left", pad=6)
@@ -849,6 +873,77 @@ def fig5_bias(metrics_df: pd.DataFrame) -> None:
 # Figure 6 — Peak flow CDF  (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
+def _plot_pooled_event_cdf(ax, obs_vals: list[float], model_vals: dict[str, list[float]],
+                            title: str, xlabel: str, obs_color: str,
+                            show_legend: bool = False) -> None:
+    """Plot a CDF of pooled peak-event flows: observed + one line per model."""
+    legend_handles: list = []
+    ax.set_title(title, fontsize=TITLE_SIZE, loc="left", pad=4)
+    if obs_vals:
+        vals, probs = _cdf(np.array(obs_vals))
+        line, = ax.plot(vals, probs, color=obs_color, linestyle="-", linewidth=1.5,
+                        label="Observed", zorder=5)
+        legend_handles.append(line)
+    for model_name in DISPLAY_ORDER:
+        v = model_vals.get(model_name, [])
+        if not v:
+            continue
+        vals, probs = _cdf(np.array(v))
+        line, = ax.plot(vals, probs,
+                        color=COLORS[model_name],
+                        linestyle=LINESTYLES[model_name],
+                        linewidth=1.2,
+                        label=MODEL_LABELS[model_name])
+        legend_handles.append(line)
+    ax.set_xlabel(xlabel, fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.set_xlim(left=0)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+    if show_legend:
+        ax.legend(handles=legend_handles, loc="lower right",
+                  **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.25})
+
+
+def _basin_max_peaks(preds: dict, gauge_ids: list[str]
+                      ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Single highest peak (max over whole test period) per basin, obs + per model."""
+    obs_basin_peaks = np.array([preds["lstm"][gid]["qobs"].max() for gid in gauge_ids])
+    model_basin_peaks: dict[str, np.ndarray] = {}
+    for model_name in DISPLAY_ORDER:
+        peaks = [preds[model_name][gid]["qsim"].max()
+                 for gid in gauge_ids
+                 if gid in preds.get(model_name, {}) and len(preds[model_name][gid]) > 0]
+        if peaks:
+            model_basin_peaks[model_name] = np.array(peaks)
+    return obs_basin_peaks, model_basin_peaks
+
+
+def _plot_basin_peak_panel(ax, preds: dict, gauge_ids: list[str], obs_color: str) -> None:
+    """Panel (b): CDF of one highest peak event per basin — shared by fig6 and fig6d."""
+    obs_basin_peaks, model_basin_peaks = _basin_max_peaks(preds, gauge_ids)
+    n_basins = len(obs_basin_peaks)
+    ax.set_title(f"(b) One highest peak event per basin (count = {n_basins})",
+                 fontsize=TITLE_SIZE, loc="left", pad=4)
+    if n_basins > 0:
+        vals, probs = _cdf(obs_basin_peaks)
+        ax.plot(vals, probs, color=obs_color, linestyle="-", linewidth=1.5,
+                zorder=5)
+    for model_name in DISPLAY_ORDER:
+        if model_name not in model_basin_peaks:
+            continue
+        vals, probs = _cdf(model_basin_peaks[model_name])
+        ax.plot(vals, probs,
+                color=COLORS[model_name],
+                linestyle=LINESTYLES[model_name],
+                linewidth=1.2)
+    ax.set_xlabel("Peak flow (mm/day)", fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.set_xlim(left=0)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+
+
 def fig6_peak_flow(preds: dict) -> None:
     """2-row 1-col peak-flow CDF.
 
@@ -881,72 +976,15 @@ def fig6_peak_flow(preds: dict) -> None:
             matched = m_df.loc[m_df["date"].isin(peak_dates), "qsim"].dropna()
             top1pct_model[model_name].extend(matched.values.tolist())
 
-    # ── One peak per basin ────────────────────────────────────────────────
-    obs_basin_peaks = np.array([preds["lstm"][gid]["qobs"].max() for gid in gauge_ids])
-    model_basin_peaks: dict[str, np.ndarray] = {}
-    for model_name in DISPLAY_ORDER:
-        peaks = [preds[model_name][gid]["qsim"].max()
-                 for gid in gauge_ids
-                 if gid in preds.get(model_name, {}) and len(preds[model_name][gid]) > 0]
-        if peaks:
-            model_basin_peaks[model_name] = np.array(peaks)
-
     # ── Plot ──────────────────────────────────────────────────────────────
     fig, axes = plt.subplots(2, 1, figsize=(4, 5))
 
-    legend_handles: list = []
+    _plot_pooled_event_cdf(
+        axes[0], top1pct_obs, top1pct_model,
+        title=f"(a) Top 1% peak event across all basins (count = {len(top1pct_obs)})",
+        xlabel="Flow (mm/day)", obs_color=obs_color, show_legend=True)
 
-    # Panel (a)
-    ax = axes[0]
-    n_top1 = len(top1pct_obs)
-    ax.set_title(f"(a) Top 1% peak event across all basins (count = {n_top1})",
-                 fontsize=TITLE_SIZE, loc="left", pad=4)
-    if n_top1 > 0:
-        vals, probs = _cdf(np.array(top1pct_obs))
-        line, = ax.plot(vals, probs, color=obs_color, linestyle="-", linewidth=1.5,
-                        label="Observed", zorder=5)
-        legend_handles.append(line)
-    for model_name in DISPLAY_ORDER:
-        v = top1pct_model.get(model_name, [])
-        if not v:
-            continue
-        vals, probs = _cdf(np.array(v))
-        line, = ax.plot(vals, probs,
-                        color=COLORS[model_name],
-                        linestyle=LINESTYLES[model_name],
-                        linewidth=1.2,
-                        label=MODEL_LABELS[model_name])
-        legend_handles.append(line)
-    ax.set_xlabel("Flow (mm/day)", fontsize=FONT_SIZE)
-    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
-    ax.set_xlim(left=0)
-    ax.set_ylim(0, 1.05)
-    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
-    ax.legend(handles=legend_handles, loc="lower right",
-              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.25})
-
-    # Panel (b) — no legend (same as (a))
-    ax = axes[1]
-    n_basins = len(obs_basin_peaks)
-    ax.set_title(f"(b) One highest peak event per basin (count = {n_basins})",
-                 fontsize=TITLE_SIZE, loc="left", pad=4)
-    if len(obs_basin_peaks) > 0:
-        vals, probs = _cdf(obs_basin_peaks)
-        ax.plot(vals, probs, color=obs_color, linestyle="-", linewidth=1.5,
-                zorder=5)
-    for model_name in DISPLAY_ORDER:
-        if model_name not in model_basin_peaks:
-            continue
-        vals, probs = _cdf(model_basin_peaks[model_name])
-        ax.plot(vals, probs,
-                color=COLORS[model_name],
-                linestyle=LINESTYLES[model_name],
-                linewidth=1.2)
-    ax.set_xlabel("Peak flow (mm/day)", fontsize=FONT_SIZE)
-    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
-    ax.set_xlim(left=0)
-    ax.set_ylim(0, 1.05)
-    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+    _plot_basin_peak_panel(axes[1], preds, gauge_ids, obs_color)
 
     plt.tight_layout(h_pad=1.2)
     plt.savefig(FIGURES_DIR / "fig6_peak_flow.png", dpi=DPI, bbox_inches="tight")
@@ -956,32 +994,187 @@ def fig6_peak_flow(preds: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Figure 6b — Annual peak flow bias CDF (single panel)
+# ---------------------------------------------------------------------------
+
+def _annual_peak_flow_bias(preds: dict) -> dict[str, list[float]]:
+    """Per-model list of annual peak flow bias (%), pooled across basin-years.
+
+    For each basin and each calendar year in the test period, the annual
+    maximum observed and simulated flow are compared independently (the
+    standard annual-maximum-series peak flow bias used in flood studies,
+    as opposed to date-matched event bias in fig6).
+    """
+    gauge_ids = list(preds["lstm"].keys())
+
+    bias_by_model: dict[str, list[float]] = {m: [] for m in DISPLAY_ORDER}
+    for model_name in DISPLAY_ORDER:
+        for gid in gauge_ids:
+            df = preds.get(model_name, {}).get(gid)
+            if df is None or df.empty:
+                continue
+            annual = df.groupby(df["date"].dt.year).agg(
+                qobs_max=("qobs", "max"), qsim_max=("qsim", "max"))
+            annual = annual[annual["qobs_max"] > 0]
+            bias = (annual["qsim_max"] - annual["qobs_max"]) / annual["qobs_max"] * 100
+            bias_by_model[model_name].extend(bias.values.tolist())
+    return bias_by_model
+
+
+def fig6b_annual_peak_flow(preds: dict) -> None:
+    """Single-panel CDF of annual peak flow bias (%), pooled across basin-years."""
+    bias_by_model = _annual_peak_flow_bias(preds)
+
+    fig, ax = plt.subplots(1, 1, figsize=(6.3, 3.5))
+    handles = []
+    all_vals: list[float] = []
+
+    for model_name in DISPLAY_ORDER:
+        vals = bias_by_model.get(model_name, [])
+        if not vals:
+            continue
+        arr = np.array(vals)
+        all_vals.extend(vals)
+        vals_sorted, probs = _cdf(arr)
+        median_val = float(np.median(arr))
+        lbl = f"{MODEL_LABELS[model_name]} (med={median_val:+.0f}%)"
+        line, = ax.plot(vals_sorted, probs,
+                        color=COLORS[model_name],
+                        linestyle=LINESTYLES[model_name],
+                        linewidth=1.3, label=lbl)
+        handles.append(line)
+
+    all_arr = np.array(all_vals)
+    x_lo = min(np.percentile(all_arr, 1), -5)
+    x_hi = max(np.percentile(all_arr, 99), 5)
+    pad = 0.05 * (x_hi - x_lo)
+
+    ax.axvline(0, color="#999999", linestyle=":", linewidth=0.9, zorder=1)
+    ax.set_xlim(x_lo - pad, x_hi + pad)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Annual peak flow bias (%)", fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+    ax.legend(handles=handles, loc="center left", bbox_to_anchor=(1.02, 0.5),
+              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "fig6b_annual_peak_flow.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6b_annual_peak_flow.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig6b_annual_peak_flow.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 6c — Annual peak flow |bias| CDF (single panel, easier to read)
+# ---------------------------------------------------------------------------
+
+def fig6c_annual_peak_flow_abs(preds: dict) -> None:
+    """Single-panel CDF of |annual peak flow bias| (%).
+
+    Same underlying values as fig6b, but folded to absolute magnitude —
+    every curve now starts at (0, 0) and rises monotonically, so it reads
+    more easily at a glance. This trades away over- vs under-prediction
+    direction (see fig6b for that) in exchange for legibility: curves
+    further left/steeper mean tighter, more consistent peak magnitude
+    errors regardless of sign.
+    """
+    bias_by_model = _annual_peak_flow_bias(preds)
+
+    fig, ax = plt.subplots(1, 1, figsize=(4.5, 3.5))
+    handles = []
+    all_vals: list[float] = []
+
+    for model_name in DISPLAY_ORDER:
+        vals = bias_by_model.get(model_name, [])
+        if not vals:
+            continue
+        arr = np.abs(np.array(vals))
+        all_vals.extend(arr.tolist())
+        vals_sorted, probs = _cdf(arr)
+        median_val = float(np.median(arr))
+        lbl = f"{MODEL_LABELS[model_name]} (med={median_val:.0f}%)"
+        line, = ax.plot(vals_sorted, probs,
+                        color=COLORS[model_name],
+                        linestyle=LINESTYLES[model_name],
+                        linewidth=1.3, label=lbl)
+        handles.append(line)
+
+    x_hi = max(np.percentile(np.array(all_vals), 99), 5)
+
+    ax.set_xlim(0, x_hi * 1.05)
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("|Annual peak flow bias| (%)", fontsize=FONT_SIZE)
+    ax.set_ylabel("Cumulative probability", fontsize=FONT_SIZE)
+    ax.grid(True, linestyle="--", alpha=0.3, linewidth=0.4)
+    ax.legend(handles=handles, loc="lower right",
+              **{**_LEG, "fontsize": FONT_SIZE - 1, "labelspacing": 0.35})
+
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "fig6c_annual_peak_flow_abs.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6c_annual_peak_flow_abs.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig6c_annual_peak_flow_abs.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 6d — Peak flow CDF, annual peaks instead of top 1% (2-row × 1-col)
+# ---------------------------------------------------------------------------
+
+def fig6d_annual_peak_flow(preds: dict) -> None:
+    """Same layout as fig6, but panel (a) uses annual peaks instead of top 1%.
+
+    (a) Observed annual peak flow (one per basin-year), pooled across all
+        basins, matched to each model's simulated flow on the same date.
+    (b) One highest peak event (max over the whole test period) per basin —
+        identical to fig6 panel (b).
+    """
+    gauge_ids = list(preds["lstm"].keys())
+    obs_color = "#333333"
+
+    # ── Annual peaks (one per basin-year), pooled ──────────────────────────
+    annual_obs: list[float] = []
+    annual_model: dict[str, list[float]] = {mn: [] for mn in DISPLAY_ORDER}
+
+    for gid in gauge_ids:
+        obs_df = preds["lstm"][gid]
+        peak_idx = obs_df.groupby(obs_df["date"].dt.year)["qobs"].idxmax()
+        peak_rows = obs_df.loc[peak_idx]
+        annual_obs.extend(peak_rows["qobs"].tolist())
+        peak_dates = set(peak_rows["date"].values)
+        for model_name in DISPLAY_ORDER:
+            m_df = preds.get(model_name, {}).get(gid)
+            if m_df is None or m_df.empty:
+                continue
+            matched = m_df.loc[m_df["date"].isin(peak_dates), "qsim"].dropna()
+            annual_model[model_name].extend(matched.values.tolist())
+
+    # ── Plot ──────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(2, 1, figsize=(4, 5))
+
+    _plot_pooled_event_cdf(
+        axes[0], annual_obs, annual_model,
+        title=f"(a) Annual peak flow across all basins (count = {len(annual_obs)})",
+        xlabel="Flow (mm/day)", obs_color=obs_color, show_legend=True)
+
+    _plot_basin_peak_panel(axes[1], preds, gauge_ids, obs_color)
+
+    plt.tight_layout(h_pad=1.2)
+    plt.savefig(FIGURES_DIR / "fig6d_annual_peak_flow.png", dpi=DPI, bbox_inches="tight")
+    plt.savefig(FIGURES_DIR / "fig6d_annual_peak_flow.svg", dpi=DPI, bbox_inches="tight")
+    plt.close()
+    print("Saved fig6d_annual_peak_flow.png")
+
+
+# ---------------------------------------------------------------------------
 # Figure 7 — NSE maps (8 panels, fixed gauge_id matching)
 # ---------------------------------------------------------------------------
 
-def _detect_gauge_col(gdf: gpd.GeoDataFrame) -> str | None:
-    """Try to find the column in the shapefile that holds gauge IDs."""
-    candidates = ["gauge_id", "station", "STATION", "ID", "id", "GID",
-                  "GaugeID", "gauge", "GAUGE_ID", "site_no"]
-    for col in candidates:
-        if col in gdf.columns:
-            return col
-    print(f"  Shapefile columns: {gdf.columns.tolist()}")
-    return None
+def fig7_nse_maps(metrics_df: pd.DataFrame) -> None:
+    stations = pd.read_csv(STATIONS_CSV)
+    stations["gauge_id"] = stations["station"].apply(_norm_gauge_id)
 
-
-def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> None:
-    if basins_gdf.crs and not basins_gdf.crs.is_geographic:
-        basins_gdf = basins_gdf.to_crs(epsg=4326)
-
-    gauge_col = _detect_gauge_col(basins_gdf)
-
-    countries = _load_country_boundaries()
-    nepal_gdf = None
-    if countries is not None:
-        name_col = next((c for c in ["NAME", "ADMIN", "name"] if c in countries.columns), None)
-        if name_col:
-            nepal_gdf = countries[countries[name_col] == "Nepal"]
+    nepal_boundary = _load_nepal_boundary()
 
     nse_all = metrics_df["nse"].dropna()
     vmin, vmax = max(nse_all.min(), -0.5), 1.0
@@ -1003,23 +1196,22 @@ def fig7_nse_maps(metrics_df: pd.DataFrame, basins_gdf: gpd.GeoDataFrame) -> Non
     for i, model_name in enumerate(_FIG7_ORDER):
         ax = axes_flat[i]
 
-        if nepal_gdf is not None:
-            nepal_gdf.plot(ax=ax, color="#EEEEEE", edgecolor="#AAAAAA",
-                           linewidth=0.5, zorder=0)
+        if nepal_boundary is not None:
+            nepal_boundary.plot(ax=ax, color="#EEEEEE", edgecolor="#AAAAAA",
+                                 linewidth=0.5, zorder=0)
 
-        if gauge_col and gauge_col in basins_gdf.columns:
-            gdf_plot = basins_gdf.copy()
-            # Fix: normalise gauge_id on both sides to avoid float/string mismatch
-            nse_lookup = metrics_df[metrics_df["model"] == model_name].copy()
-            nse_lookup["_key"] = nse_lookup["gauge_id"].apply(_norm_gauge_id)
-            nse_dict = nse_lookup.set_index("_key")["nse"].to_dict()
-            gdf_plot["nse"] = gdf_plot[gauge_col].apply(_norm_gauge_id).map(nse_dict)
-            gdf_plot.plot(column="nse", ax=ax, cmap=cmap, norm=norm,
-                          edgecolor="gray", linewidth=0.4, zorder=1,
-                          missing_kwds={"color": "lightgray"})
-        else:
-            basins_gdf.plot(ax=ax, color="lightblue", edgecolor="gray",
-                            linewidth=0.4, zorder=1)
+        nse_lookup = metrics_df[metrics_df["model"] == model_name].copy()
+        nse_lookup["_key"] = nse_lookup["gauge_id"].apply(_norm_gauge_id)
+        nse_dict = nse_lookup.set_index("_key")["nse"].to_dict()
+        site_plot = stations.copy()
+        site_plot["nse"] = site_plot["gauge_id"].map(nse_dict)
+
+        has_nse = site_plot["nse"].notna()
+        ax.scatter(site_plot.loc[has_nse, "lon"], site_plot.loc[has_nse, "lat"],
+                   c=site_plot.loc[has_nse, "nse"], cmap=cmap, norm=norm,
+                   s=28, edgecolor="black", linewidth=0.4, zorder=2)
+        ax.scatter(site_plot.loc[~has_nse, "lon"], site_plot.loc[~has_nse, "lat"],
+                   color="lightgray", s=28, edgecolor="black", linewidth=0.4, zorder=2)
 
         # Title embedded inside panel — top right
         panel_letter = chr(ord("a") + i)
@@ -1397,7 +1589,10 @@ def main() -> None:
     fig4c_nse_heatmap(metrics_df)
     fig5_bias(metrics_df)
     fig6_peak_flow(preds)
-    fig7_nse_maps(metrics_df, basins_gdf)
+    fig6b_annual_peak_flow(preds)
+    fig6c_annual_peak_flow_abs(preds)
+    fig6d_annual_peak_flow(preds)
+    fig7_nse_maps(metrics_df)
     fig8_loss_curves()
     fig9_basin_properties(metrics_df)
     fig9b_correlation_heatmap(metrics_df)
