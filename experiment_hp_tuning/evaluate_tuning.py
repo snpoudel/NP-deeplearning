@@ -43,7 +43,7 @@ ARCHITECTURES = {
     "transformer": "Transformer",
 }
 
-# Okabe-Ito palette — matches lstm/transformer colors used in 07_evaluate.py
+# Okabe-Ito palette (matches lstm/transformer colors used in 07_evaluate.py)
 COLORS = {
     "lstm":        "#009E73",
     "transformer": "#F0E442",

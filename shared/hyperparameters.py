@@ -1,9 +1,9 @@
 """Global hyperparameters for experiments."""
 
-# global hyperparameters: random seed, train/val/test split dates, and evaluation metrics
+# Global hyperparameters: random seed, train/val/test split dates, and evaluation metrics.
 RANDOM_SEED = 42
 
-# Dev uses a single seed for fast smoke-testing; production uses all three.
+# Dev uses a single seed for fast smoke-testing; production uses all five.
 DEV_SEEDS  = [42]
 PROD_SEEDS = [42, 123, 456, 789, 2024]
 
@@ -23,7 +23,7 @@ EVAL_METRICS = ["nse", "kge", "rmse"]
 LOSS_FUNCTION = "mse"
 OPTIMIZER = "adam"
 
-# model hyperparameters — two profiles selectable at runtime via --mode dev|production
+# Model hyperparameters: two profiles, selectable at runtime via --mode dev|production.
 DEV_HYPERPARAMS = {
     "lstm": {
         "hidden_size": 8,
@@ -83,15 +83,13 @@ PROD_HYPERPARAMS = {
 }
 
 
-# Backward-compatible alias — existing scripts import HYPERPARAMS directly
+# Backward-compatible alias: existing scripts import HYPERPARAMS directly.
 HYPERPARAMS = PROD_HYPERPARAMS
 
 
 def get_hyperparams(mode: str = "dev") -> dict:
-    """Return the hyperparameter dict for the given mode.
-
-    Args:
-        mode: "dev" (default) for fast smoke-test values, or "production" for full-run values.
+    """Return the hyperparameter dict for the given mode: "dev" (default, fast
+    smoke-test values) or "production" (full-run values).
     """
     if mode == "production":
         return PROD_HYPERPARAMS

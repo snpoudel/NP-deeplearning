@@ -52,7 +52,7 @@ SCALER_PATH = MODEL_DIR / "scaler.pkl"
 # ---------------------------------------------------------------------------
 
 def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load all parquet files from input_dir and parse date column.
+    """Load all gauge parquet files from input_dir and parse the date column.
 
     Returns:
         dict mapping gauge_id (str) to its DataFrame.
@@ -130,7 +130,6 @@ def run_inference(
 
 
 def compute_metrics(qobs_arr: np.ndarray, qsim_arr: np.ndarray) -> dict[str, float]:
-    """Compute NSE, KGE, and RMSE between observed and simulated arrays."""
     return {
         "nse": nse(qobs_arr, qsim_arr),
         "kge": kge(qobs_arr, qsim_arr),
@@ -178,7 +177,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
         all_dfs.append(df)
     all_df = pd.concat(all_dfs, ignore_index=True)
 
-    # Filter to training period (1980–2014) and drop rows with missing qobs
+    # Filter to the full model period (1980–2014) and drop rows with missing qobs
     all_df = all_df[
         (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["test"][1])

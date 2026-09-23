@@ -1,12 +1,12 @@
-"""Orchestrator: trains all 6 models for every seed in SEEDS, aggregates
-predictions and loss curves across seeds, then runs evaluation.
+"""Orchestrator: trains all 6 models for every seed, aggregates predictions
+and loss curves across seeds, then runs evaluation.
 
-Configuration is entirely driven by shared/hyperparameters.py:
-  SEEDS  — list of random seeds (e.g. [42] for a single run, [42, 123, 456] for multi-seed)
-  DEVICE — "auto" to detect CUDA at runtime, or "cpu" / "cuda" to force a specific device
+Seeds and device come from shared/hyperparameters.py: DEV_SEEDS/PROD_SEEDS
+(selected via --mode) and DEVICE ("auto" detects CUDA at runtime, or set
+"cpu"/"cuda" to force a specific device).
 
 Usage:
-    python run_all.py              # full pipeline: train → aggregate → evaluate
+    python run_all.py              # full pipeline: train, aggregate, evaluate
     python run_all.py --skip-eval  # stop after aggregation (skip 07_evaluate.py)
 """
 
@@ -61,10 +61,10 @@ def aggregate_predictions(seeds: list[int]) -> None:
     """Average per-seed qsim predictions and write final files to the top-level
     output/predictions/{model}/ directory (without a seed subdirectory).
 
-    For single-seed runs this is effectively a copy. For multi-seed runs the
-    qsim values are averaged date-by-date across seeds; qobs and physical-model
-    columns (qglofas/qgrfr) are taken from the first seed since they are
-    deterministic (data-derived, not model-derived).
+    For single-seed runs this is effectively a copy. For multi-seed runs, qsim
+    is averaged date-by-date across seeds; qobs and physical-model columns
+    (qglofas/qgrfr) are taken from the first seed since they're deterministic
+    (data-derived, not model-derived).
     """
     print("\nAggregating predictions across seeds...")
     for model_name in DL_MODELS:

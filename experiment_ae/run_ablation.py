@@ -4,13 +4,13 @@ experiment_ae/run_ablation.py
 Input feature ablation experiment for LSTM.
 
 Trains two LSTM variants, each across every seed in the run mode's seed list
-(SEEDS[mode]), then averages predictions across seeds — mirroring how the
+(SEEDS[mode]), then averages predictions across seeds, mirroring how the
 main pipeline (01_run_lstm.py + run_all.py) produces its seed-averaged result:
 
-  A) lstm_dynamic   — 2 features: temperature + precipitation
-  B) lstm_static    — 18 features: dynamic + existing 16 static attrs
+  A) lstm_dynamic (2 features: temperature + precipitation)
+  B) lstm_static  (18 features: dynamic + existing 16 static attrs)
 
-A third variant, "dynamic + AlphaEarth embeddings", is intentionally NOT
+A third variant, "dynamic + AlphaEarth embeddings", is intentionally not
 retrained here: it is feature-for-feature and hyperparameter-for-hyperparameter
 identical to the main pipeline's production `lstm` model (both train on
 ALL_FEATURES = DYNAMIC_FEATURES + AE_FEATURES). Retraining it separately would
@@ -170,7 +170,7 @@ def train_variant(
 
     # -- Fit scaler on training data only -------------------------------------
     # Deterministic (StandardScaler has no randomness), so re-fitting per seed
-    # is harmless — every seed writes back the same values.
+    # is harmless: every seed writes back the same values.
     print("Fitting scaler...")
     scaler = fit_and_save_scaler(train_df, scaler_path, feature_cols=feature_cols)
 
@@ -344,10 +344,10 @@ def main(mode: str = "dev") -> None:
     base_gauge_dfs = load_gauge_dfs(INPUT_DIR)
     print(f"  {len(base_gauge_dfs)} gauges loaded")
 
-    # Define the two variants actually trained here.
-    # ("dynamic + AlphaEarth" is not retrained — see module docstring; it is
-    # identical to the main pipeline's production `lstm` model, so
-    # evaluate_ablation.py reuses output/predictions/lstm/*_mean.parquet.)
+    # Define the two variants actually trained here. "dynamic + AlphaEarth" is
+    # not retrained (see module docstring): it is identical to the main
+    # pipeline's production `lstm` model, so evaluate_ablation.py reuses
+    # output/predictions/lstm/*_mean.parquet.
     variants = {
         "lstm_dynamic": (DYNAMIC_FEATURES,                     base_gauge_dfs),
         "lstm_static":  (DYNAMIC_FEATURES + STATIC_FEATURES,   base_gauge_dfs),

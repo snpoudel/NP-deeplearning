@@ -4,12 +4,12 @@ experiment_hp_tuning/run_tuning_lstm.py
 Hidden-size hyperparameter tuning for LSTM.
 
 Trains three LSTM variants with seed=42, all using the AlphaEarth input
-variant (dynamic + AlphaEarth embeddings — the best input variant from
+variant (dynamic + AlphaEarth embeddings, the best input variant from
 experiment_ae/), sweeping only hidden_size:
 
-  A) lstm_h64   — hidden_size=64
-  B) lstm_h128  — hidden_size=128
-  C) lstm_h256  — hidden_size=256
+  A) lstm_h64  (hidden_size=64)
+  B) lstm_h128 (hidden_size=128)
+  C) lstm_h256 (hidden_size=256)
 
 Every other hyperparameter (num_layers, dropout, learning rate, seq_len,
 batch_size, epochs, patience) stays at the production profile

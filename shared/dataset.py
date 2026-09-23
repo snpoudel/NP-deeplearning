@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import ConcatDataset, Dataset
 
 # ---------------------------------------------------------------------------
-# Feature definitions — imported by all run scripts
+# Feature definitions, imported by all run scripts
 # ---------------------------------------------------------------------------
 
 DYNAMIC_FEATURES = [
@@ -50,9 +50,9 @@ TARGET = "qobs"
 AE_FEATURES = [f"emb_{i}" for i in range(64)]
 EMBEDDINGS_PATH = Path("input/alphaearth_embeddings.parquet")
 
-# ALL_FEATURES uses AlphaEarth embeddings instead of hand-crafted static attributes —
-# chosen by the input ablation experiment (experiment_ae/), which showed AE beats
-# both dynamic-only and dynamic+static on NSE, KGE, RMSE, and PBIAS.
+# ALL_FEATURES uses AlphaEarth embeddings instead of hand-crafted static attributes:
+# the input ablation experiment (experiment_ae/) showed AE beats both dynamic-only
+# and dynamic+static on NSE, KGE, RMSE, and PBIAS.
 ALL_FEATURES = DYNAMIC_FEATURES + AE_FEATURES  # 66 input features total
 
 
@@ -65,17 +65,9 @@ def fit_and_save_scaler(
     scaler_path: str | Path,
     feature_cols: list[str] = ALL_FEATURES,
 ) -> StandardScaler:
-    """Fit a StandardScaler on feature_cols of the training split and save it.
+    """Fit a StandardScaler on feature_cols of the training split and save it to scaler_path.
 
-    Only the specified features are standardized; the target (qobs) is not.
-
-    Args:
-        train_df: Training-split DataFrame (must contain all columns in feature_cols).
-        scaler_path: Path where the fitted scaler will be saved (e.g. output/model/scaler.pkl).
-        feature_cols: Feature columns to fit on. Defaults to ALL_FEATURES (66 cols).
-
-    Returns:
-        The fitted StandardScaler instance.
+    Only the specified features are standardized; the target (qobs) is left untouched.
     """
     scaler_path = Path(scaler_path)
     scaler_path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,14 +124,6 @@ def apply_scaler(
     """Return a copy of df with feature_cols standardized using a fitted scaler.
 
     The date and qobs columns are left untouched.
-
-    Args:
-        df: DataFrame containing feature_cols columns.
-        scaler: A fitted StandardScaler (from fit_and_save_scaler or load_scaler).
-        feature_cols: Feature columns to transform. Defaults to ALL_FEATURES (66 cols).
-
-    Returns:
-        New DataFrame with standardized feature columns.
     """
     df = df.copy()
     df[feature_cols] = scaler.transform(df[feature_cols].values)
@@ -153,18 +137,15 @@ def apply_scaler(
 class StreamflowDataset(Dataset):
     """Sliding-window sequence dataset for streamflow prediction.
 
-    Each sample is a window of seq_len consecutive time steps. The model input
-    is the feature matrix for those steps (shape: seq_len × 66) and the target
-    is the qobs value at the last step of the window.
+    Each sample is a window of seq_len consecutive time steps: the input is the
+    feature matrix for those steps (shape: seq_len × 66) and the target is the
+    qobs value at the last step of the window.
 
     Static basin attributes are already constant per basin in the DataFrame, so
-    they naturally repeat across all timesteps in the window — no extra tiling
+    they naturally repeat across all timesteps in the window: no extra tiling
     is needed.
 
-    Args:
-        df: Scaled DataFrame for one split (or one gauge). Must contain date,
-            qobs, and all columns in ALL_FEATURES. qobs must be non-null.
-        seq_len: Number of consecutive days per input sequence.
+    df must contain date, qobs (non-null), and all columns in ALL_FEATURES.
     """
 
     def __init__(

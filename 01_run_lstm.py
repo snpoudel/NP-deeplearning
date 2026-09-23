@@ -51,7 +51,7 @@ SCALER_PATH = MODEL_DIR / "scaler.pkl"
 # ---------------------------------------------------------------------------
 
 def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load all parquet files from input_dir and parse date column.
+    """Load all gauge parquet files from input_dir and parse the date column.
 
     Returns:
         dict mapping gauge_id (str) to its DataFrame.
@@ -129,7 +129,6 @@ def run_inference(
 
 
 def compute_metrics(qobs_arr: np.ndarray, qsim_arr: np.ndarray) -> dict[str, float]:
-    """Compute NSE, KGE, and RMSE between observed and simulated arrays."""
     return {
         "nse": nse(qobs_arr, qsim_arr),
         "kge": kge(qobs_arr, qsim_arr),
@@ -177,7 +176,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
         all_dfs.append(df)
     all_df = pd.concat(all_dfs, ignore_index=True)
 
-    # Filter to training period (1980–2014) and drop rows with missing qobs
+    # Filter to the full model period (1980–2014) and drop rows with missing qobs
     all_df = all_df[
         (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["test"][1])
@@ -211,8 +210,8 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
 
     # ------------------------------------------------------------------
     # 4. Build per-gauge DataLoaders
-    # Prevents sequences from crossing gauge boundaries (~7% of samples
-    # in the flat-concatenation approach mix data from two different gauges).
+    # Prevents sequences from crossing gauge boundaries; in the flat-concatenation
+    # approach, ~7% of samples would mix data from two different gauges.
     # ------------------------------------------------------------------
     train_per_gauge, val_per_gauge = {}, {}
     for gauge_id, gdf in gauge_dfs.items():
@@ -339,8 +338,8 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
         out_df = pd.DataFrame({"date": dates, "qobs": qobs_g, "qsim": qsim_g})
         out_path = pred_dir / f"nepal_{gauge_id}_lstm.parquet"
         out_df.to_parquet(out_path, index=False)
-        # also write to flat path so 07_evaluate.py works after a standalone run
-        # (run_all.py will overwrite this with the seed-averaged result)
+        # Also write to the flat path so 07_evaluate.py works after a standalone run
+        # (run_all.py later overwrites this with the seed-averaged result)
         out_df.to_parquet(pred_dir.parent / f"nepal_{gauge_id}_lstm_mean.parquet", index=False)
         print(f"  {gauge_id}: {len(out_df)} rows -> {out_path}")
 

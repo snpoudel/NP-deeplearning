@@ -7,8 +7,8 @@
 #   Hybrid:              GloFAS+LSTM, GRFR+LSTM, GloFAS+Transformer, GRFR+Transformer
 #
 # Outputs:
-#   output/metrics.parquet       — per-model per-gauge metrics table
-#   output/figures/fig1_*.png    — nine figures at 300 dpi
+#   output/metrics.parquet:    per-model per-gauge metrics table
+#   output/figures/fig1_*.png: nine figures at 300 dpi
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ SHAPEFILE_PATH = Path("input/shapefile/merged_shapefile.shp")
 STATIONS_CSV = Path("input/selected_hydro_stations.csv")
 
 # ---------------------------------------------------------------------------
-# Styling — Okabe-Ito color-blind-friendly palette
+# Styling: Okabe-Ito color-blind-friendly palette
 # ---------------------------------------------------------------------------
 
 # Loading order (used internally for compute_all_metrics / load_all_predictions)
@@ -102,7 +102,7 @@ plt.rcParams.update({
     "legend.fontsize": FONT_SIZE,
 })
 
-# Shared legend style — applied to all figures for consistency
+# Shared legend style, reused across all figures for consistency
 _LEG = dict(
     frameon=True, framealpha=0.92, edgecolor="#cccccc",
     handlelength=1.5, borderpad=0.3, labelspacing=0.14,
@@ -296,7 +296,7 @@ def _load_country_boundaries() -> gpd.GeoDataFrame | None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 1 — Basin map + observation availability (merged)
+# Figure 1: Basin map + observation availability (merged)
 # ---------------------------------------------------------------------------
 
 def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
@@ -486,7 +486,7 @@ def fig1_basin_overview(basins_gdf: gpd.GeoDataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 3 — Time series for representative basin (3×2 compound layout)
+# Figure 3: Time series for representative basin (3×2 compound layout)
 # ---------------------------------------------------------------------------
 
 def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
@@ -499,8 +499,8 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
 
     Basin is chosen where post-processor is as good or better than physical model.
     """
-    # Select basin where BOTH GloFAS hybrids AND GRFR hybrids beat their
-    # respective physical model (so every post-processor panel shows a benefit).
+    # Select a basin where both GloFAS and GRFR hybrids beat their physical
+    # model, so every post-processor panel shows a benefit.
     all_gauge_ids = metrics_df["gauge_id"].unique()
     scores: dict[str, float] = {}
     for gid in all_gauge_ids:
@@ -543,7 +543,7 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
           f"mean hybrid NSE={_hybrid_mean.get(rep_gauge, float('nan')):.3f}")
 
     test_start = pd.Timestamp(SPLIT_DATES["test"][0])
-    test_start += pd.DateOffset(years=1) # start 1-year after test start
+    test_start += pd.DateOffset(years=1) # start one year into the test period
     plot_end   = test_start + pd.DateOffset(years=show_years)
 
     OBS_COLOR = "#999999"
@@ -573,7 +573,7 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
     for ax_idx, (panel_label, models) in enumerate(panel_configs):
         ax = axes[ax_idx]
 
-        # Observed line — use first model's qobs column (same basin)
+        # Observed line: use first model's qobs column (same basin)
         obs_df = _get_df(models[0])
         if obs_df is not None and not obs_df.empty:
             ax.plot(obs_df["date"], obs_df["qobs"],
@@ -619,7 +619,7 @@ def fig3_timeseries(preds: dict, metrics_df: pd.DataFrame,
 
 
 # ---------------------------------------------------------------------------
-# Figure 4 — CDF of NSE and KGE  (2-row × 1-col)
+# Figure 4: CDF of NSE, single panel
 # ---------------------------------------------------------------------------
 
 def fig4_cdf_metrics(metrics_df: pd.DataFrame) -> None:
@@ -659,7 +659,7 @@ def fig4_cdf_metrics(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 4b — Boxplot of NSE and KGE  (2-row × 1-col)
+# Figure 4b: Boxplot of NSE, single panel
 # ---------------------------------------------------------------------------
 
 def fig4b_boxplot_metrics(metrics_df: pd.DataFrame) -> None:
@@ -717,14 +717,14 @@ def fig4b_boxplot_metrics(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 4c — NSE heatmap: all models × all sites
+# Figure 4c: NSE heatmap (all models × all sites)
 # ---------------------------------------------------------------------------
 
 def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
     """NSE heatmap: x = models, y = sites, colour = NSE.
 
     Sites are sorted by their mean NSE (best at top) so performance gradients
-    read naturally from top-to-bottom.  Model groups are separated by a thin
+    read naturally from top to bottom. Model groups are separated by a thin
     vertical rule for clarity.
     """
     # Sort sites best-to-worst by mean NSE across all models
@@ -767,7 +767,7 @@ def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
     for y in np.arange(-0.5, n_rows, 1):
         ax.axhline(y, color="white", linewidth=1.0, zorder=3)
 
-    # Annotate cells with NSE value; contrast text colour against background
+    # Annotate cells with the NSE value, using a text colour that contrasts with the background
     for si in range(n_rows):
         for mi in range(n_models):
             val = nse_matrix[si, mi]
@@ -781,8 +781,8 @@ def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
                     fontweight="bold", zorder=4)
 
     # Thicker vertical separators between model groups:
-    #   group 0: lstm, transformer  (after col 1)
-    #   group 1: glofas, glofas_lstm, glofas_transformer  (after col 4)
+    #   group 0: lstm, transformer (after col 1)
+    #   group 1: glofas, glofas_lstm, glofas_transformer (after col 4)
     #   group 2: grfr, grfr_lstm, grfr_transformer
     for sep_x in [1.5, 4.5]:
         ax.axvline(sep_x, color="#444444", linewidth=2.0, zorder=5)
@@ -815,7 +815,7 @@ def fig4c_nse_heatmap(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 5 — Bias analysis (four panels, shared x-axis)
+# Figure 5: Bias analysis (four panels, shared x-axis)
 # ---------------------------------------------------------------------------
 
 def fig5_bias(metrics_df: pd.DataFrame) -> None:
@@ -870,7 +870,7 @@ def fig5_bias(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 6a — Peak flow CDF  (2-row × 1-col)
+# Figure 6a: Peak flow CDF (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def _plot_pooled_event_cdf(ax, obs_vals: list[float], model_vals: dict[str, list[float]],
@@ -919,7 +919,7 @@ def _basin_max_peaks(preds: dict, gauge_ids: list[str]
 
 
 def _plot_basin_peak_panel(ax, preds: dict, gauge_ids: list[str], obs_color: str) -> None:
-    """Panel (b): CDF of one highest peak event per basin — shared by fig6a and fig6c."""
+    """Panel (b): CDF of one highest peak event per basin, shared by fig6a and fig6c."""
     obs_basin_peaks, model_basin_peaks = _basin_max_peaks(preds, gauge_ids)
     n_basins = len(obs_basin_peaks)
     ax.set_title(f"(b) One highest peak event per basin (count = {n_basins})",
@@ -993,16 +993,16 @@ def fig6a_peak_flow(preds: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 6b — Peak flow bias CDF (2-row × 1-col)
+# Figure 6b: Peak flow bias CDF (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def _annual_peak_flow_bias(preds: dict) -> dict[str, list[float]]:
     """Per-model list of annual peak flow bias (%), pooled across basin-years.
 
-    For each basin and each calendar year in the test period, the annual
-    maximum observed and simulated flow are compared independently (the
-    standard annual-maximum-series peak flow bias used in flood studies,
-    as opposed to date-matched event bias in fig6a).
+    For each basin and calendar year in the test period, the annual maximum
+    observed and simulated flow are compared independently: the standard
+    annual-maximum-series peak flow bias used in flood studies, as opposed
+    to the date-matched event bias in fig6a.
     """
     gauge_ids = list(preds["lstm"].keys())
 
@@ -1023,8 +1023,8 @@ def _annual_peak_flow_bias(preds: dict) -> dict[str, list[float]]:
 def _basin_peak_bias(preds: dict, gauge_ids: list[str]) -> dict[str, list[float]]:
     """Per-model list of bias (%) of the single highest peak per basin.
 
-    Same independent-extrema convention as _basin_max_peaks (obs and sim
-    peaks are each basin's own max over the whole test period, not
+    Same independent-extrema convention as _basin_max_peaks: obs and sim
+    peaks are each basin's own max over the whole test period (not
     date-matched), expressed as a bias ratio and pooled across basins.
     """
     obs_basin_peaks, model_basin_peaks = _basin_max_peaks(preds, gauge_ids)
@@ -1108,7 +1108,7 @@ def fig6b_annual_peak_flow_bias(preds: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 6c — Peak flow CDF, annual peaks instead of top 1% (2-row × 1-col)
+# Figure 6c: Peak flow CDF, annual peaks instead of top 1% (2-row × 1-col)
 # ---------------------------------------------------------------------------
 
 def fig6c_annual_peak_flow(preds: dict) -> None:
@@ -1116,7 +1116,7 @@ def fig6c_annual_peak_flow(preds: dict) -> None:
 
     (a) Observed annual peak flow (one per basin-year), pooled across all
         basins, matched to each model's simulated flow on the same date.
-    (b) One highest peak event (max over the whole test period) per basin —
+    (b) One highest peak event (max over the whole test period) per basin,
         identical to fig6a panel (b).
     """
     gauge_ids = list(preds["lstm"].keys())
@@ -1157,7 +1157,7 @@ def fig6c_annual_peak_flow(preds: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 7 — NSE maps (8 panels, fixed gauge_id matching)
+# Figure 7: NSE maps (8 panels, fixed gauge_id matching)
 # ---------------------------------------------------------------------------
 
 def fig7_nse_maps(metrics_df: pd.DataFrame) -> None:
@@ -1203,7 +1203,7 @@ def fig7_nse_maps(metrics_df: pd.DataFrame) -> None:
         ax.scatter(site_plot.loc[~has_nse, "lon"], site_plot.loc[~has_nse, "lat"],
                    color="lightgray", s=28, edgecolor="black", linewidth=0.4, zorder=2)
 
-        # Title embedded inside panel — top right
+        # Title embedded inside panel, top right
         panel_letter = chr(ord("a") + i)
         ax.text(0.97, 0.97, f"({panel_letter}) {MODEL_LABELS[model_name]}",
                 transform=ax.transAxes, ha="right", va="top",
@@ -1232,7 +1232,7 @@ def fig7_nse_maps(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 8 — Training and validation loss curves
+# Figure 8: Training and validation loss curves
 # ---------------------------------------------------------------------------
 
 def fig8_loss_curves() -> None:
@@ -1283,7 +1283,7 @@ def fig8_loss_curves() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 9 — NSE vs basin properties
+# Figure 9: NSE vs basin properties
 # ---------------------------------------------------------------------------
 
 def _load_basin_properties() -> pd.DataFrame:
@@ -1378,7 +1378,7 @@ def fig9_basin_properties(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 9b — Correlation heatmaps (Pearson & Spearman: NSE vs basin props)
+# Figure 9b: Correlation heatmaps (Pearson & Spearman: NSE vs basin props)
 # ---------------------------------------------------------------------------
 
 def fig9b_correlation_heatmap(metrics_df: pd.DataFrame) -> None:
@@ -1467,7 +1467,7 @@ def fig9b_correlation_heatmap(metrics_df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Figure 10 — Training time per model
+# Figure 10: Training time per model
 # ---------------------------------------------------------------------------
 
 _TRAINING_TIMES_PATH = Path("output/training_times.csv")

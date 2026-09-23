@@ -7,7 +7,7 @@
 #   3. Final prediction: qsim = qgrfr + predicted_residual
 #
 # GRFR data: input/physical_model/grfr_selected_qobs.parquet
-#   Wide format — columns: date, 120, 259.2, 260, … (one per gauge, mm/day)
+#   Wide format: columns are date, 120, 259.2, 260, … (one per gauge, mm/day)
 #
 # Output columns: date, qobs, qgrfr, qsim
 # Output path:    output/predictions/grfr_lstm/seed{seed}/nepal_{gauge_id}_grfr_lstm.parquet
@@ -49,7 +49,7 @@ SCALER_PATH = MODEL_DIR / "scaler.pkl"
 # ---------------------------------------------------------------------------
 
 def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load all gauge parquet files and parse date column."""
+    """Load all gauge parquet files from input_dir and parse the date column."""
     gauge_dfs = {}
     for path in sorted(input_dir.glob("nepal_*_merged.parquet")):
         gauge_id = re.sub(r"^nepal_|_merged\.parquet$", "", path.name)
@@ -60,11 +60,7 @@ def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
 
 
 def load_physical_model(path: Path, col_name: str) -> pd.DataFrame:
-    """Load a physical model parquet and reshape from wide to long format.
-
-    Returns:
-        DataFrame with columns: date, gauge_id, {col_name}
-    """
+    """Load a physical model parquet and reshape from wide to long format."""
     df = pd.read_parquet(path)
     df["date"] = pd.to_datetime(df["date"], format="mixed")
     df = df.melt(id_vars="date", var_name="gauge_id", value_name=col_name)
@@ -210,7 +206,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     print(f"  Split sizes — train: {len(train_df)}, val: {len(val_df)}")
 
     # ------------------------------------------------------------------
-    # 3. Load scaler from LSTM run
+    # 3. Load scaler fitted by the LSTM run
     # ------------------------------------------------------------------
     assert SCALER_PATH.exists(), f"Scaler not found at {SCALER_PATH}. Run 01_run_lstm.py first."
     print(f"Loading scaler from {SCALER_PATH}...")
@@ -308,7 +304,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     timing_row.to_csv(timing_path, mode="a", index=False, header=not timing_path.exists())
 
     # ------------------------------------------------------------------
-    # 7. Reload best model and report validation metrics
+    # 7. Reload best model and report validation metrics on final qsim
     # ------------------------------------------------------------------
     model.load_state_dict(torch.load(model_path, map_location=_device))
 

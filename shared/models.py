@@ -24,11 +24,7 @@ from shared.hyperparameters import HYPERPARAMS, get_hyperparams
 class LSTMModel(nn.Module):
     """Single-output LSTM for sequence-to-one regression.
 
-    Args:
-        input_size: Number of input features per timestep.
-        hidden_size: Number of LSTM hidden units.
-        num_layers: Number of stacked LSTM layers.
-        dropout: Dropout probability applied between LSTM layers (not after last).
+    dropout is applied between LSTM layers only (not after the last layer).
     """
 
     def __init__(self, input_size: int, hidden_size: int, num_layers: int, dropout: float) -> None:
@@ -44,16 +40,10 @@ class LSTMModel(nn.Module):
         self.fc = nn.Linear(hidden_size, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass.
-
-        Args:
-            x: Input tensor of shape (batch, seq_len, input_size).
-
-        Returns:
-            Predictions of shape (batch, 1).
-        """
+        """Forward pass over an input of shape (batch, seq_len, input_size), returning
+        predictions of shape (batch, 1)."""
         out, _ = self.lstm(x)                    # (batch, seq_len, hidden_size)
-        return self.fc(self.dropout(out[:, -1, :]))  # (batch, 1) — last timestep only
+        return self.fc(self.dropout(out[:, -1, :]))  # (batch, 1); last timestep only
 
 
 def build_lstm_model(input_size: int, mode: str = "production") -> LSTMModel:
@@ -101,13 +91,7 @@ class TransformerModel(nn.Module):
         encoder     : num_encoder_layers × TransformerEncoderLayer
         fc          : Linear(d_model → 1) applied to the last timestep
 
-    Args:
-        input_size: Number of input features per timestep.
-        d_model: Internal embedding dimension.
-        nhead: Number of attention heads (must divide d_model).
-        num_encoder_layers: Number of stacked encoder layers.
-        dim_feedforward: Hidden dimension of the FFN inside each encoder layer.
-        dropout: Dropout probability.
+    nhead must divide d_model.
     """
 
     def __init__(self, input_size: int, d_model: int, nhead: int,
@@ -127,19 +111,13 @@ class TransformerModel(nn.Module):
         self.fc = nn.Linear(d_model, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass.
-
-        Args:
-            x: Input tensor of shape (batch, seq_len, input_size).
-
-        Returns:
-            Predictions of shape (batch, 1).
-        """
+        """Forward pass over an input of shape (batch, seq_len, input_size), returning
+        predictions of shape (batch, 1)."""
         x = self.input_proj(x)        # (batch, seq_len, d_model)
         x = self.input_norm(x)        # normalize before positional encoding
         x = self.pos_encoding(x)      # (batch, seq_len, d_model)
         x = self.encoder(x)           # (batch, seq_len, d_model)
-        return self.fc(x[:, -1, :])   # (batch, 1) — last timestep only
+        return self.fc(x[:, -1, :])   # (batch, 1); last timestep only
 
 
 def build_transformer_model(input_size: int, mode: str = "production") -> TransformerModel:

@@ -6,10 +6,10 @@
 #   3. Final prediction: qsim = qglofas + predicted_residual
 #
 # Everything else (features, scaler, model architecture, hyperparameters) is
-# identical to 01_run_lstm.py. The scaler fitted during that run is reused here.
+# identical to 01_run_lstm.py, whose scaler is reused here.
 #
 # GloFAS data: input/physical_model/glofas_selected_qobs.parquet
-#   Wide format — columns: date, 120, 259.2, 260, … (one per gauge, mm/day)
+#   Wide format: columns are date, 120, 259.2, 260, … (one per gauge, mm/day)
 #
 # Output columns: date, qobs, qglofas, qsim
 # Output path:    output/predictions/glofas_lstm/seed{seed}/nepal_{gauge_id}_glofas_lstm.parquet
@@ -51,7 +51,7 @@ SCALER_PATH = MODEL_DIR / "scaler.pkl"
 # ---------------------------------------------------------------------------
 
 def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load all gauge parquet files and parse date column."""
+    """Load all gauge parquet files from input_dir and parse the date column."""
     gauge_dfs = {}
     for path in sorted(input_dir.glob("nepal_*_merged.parquet")):
         gauge_id = re.sub(r"^nepal_|_merged\.parquet$", "", path.name)
@@ -62,11 +62,7 @@ def load_data(input_dir: Path) -> dict[str, pd.DataFrame]:
 
 
 def load_glofas(glofas_path: Path) -> pd.DataFrame:
-    """Load GloFAS parquet and reshape from wide to long format.
-
-    Returns:
-        DataFrame with columns: date, gauge_id, qglofas
-    """
+    """Load GloFAS parquet and reshape from wide to long format."""
     df = pd.read_parquet(glofas_path)
     df["date"] = pd.to_datetime(df["date"])
     # Melt wide → long: each row becomes (date, gauge_id, qglofas)
@@ -75,11 +71,7 @@ def load_glofas(glofas_path: Path) -> pd.DataFrame:
 
 
 def merge_glofas(gauge_dfs: dict[str, pd.DataFrame], glofas_long: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Merge qglofas into each gauge DataFrame on date.
-
-    Returns:
-        dict mapping gauge_id to DataFrame with added qglofas column.
-    """
+    """Merge qglofas into each gauge DataFrame on date."""
     merged = {}
     for gauge_id, df in gauge_dfs.items():
         g_glofas = glofas_long[glofas_long["gauge_id"] == gauge_id][["date", "qglofas"]]
@@ -146,7 +138,6 @@ def run_inference(
 
 
 def compute_metrics(qobs_arr: np.ndarray, qsim_arr: np.ndarray) -> dict[str, float]:
-    """Compute NSE, KGE, and RMSE between observed and simulated arrays."""
     return {
         "nse": nse(qobs_arr, qsim_arr),
         "kge": kge(qobs_arr, qsim_arr),
@@ -196,7 +187,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
         all_dfs.append(df)
     all_df = pd.concat(all_dfs, ignore_index=True)
 
-    # Filter to 1980–2014, require both qobs and qglofas non-null
+    # Filter to the full model period (1980–2014) and require both qobs and qglofas
     all_df = all_df[
         (all_df["date"] >= SPLIT_DATES["val"][0])
         & (all_df["date"] <= SPLIT_DATES["test"][1])
@@ -209,9 +200,9 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
 
     assert len(all_df) > 0, "No valid rows after filtering — check input data."
 
-    # Compute residual and replace qobs with it for training target
+    # Compute the residual and store it as the training target (qobs is replaced)
     all_df["residual"] = all_df[TARGET] - all_df["qglofas"]
-    all_df[TARGET] = all_df["residual"]  # dataset will predict residuals
+    all_df[TARGET] = all_df["residual"]
 
     # ------------------------------------------------------------------
     # 2. Split by date
@@ -225,7 +216,7 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     print(f"  Split sizes — train: {len(train_df)}, val: {len(val_df)}")
 
     # ------------------------------------------------------------------
-    # 3. Load scaler from LSTM run
+    # 3. Load scaler fitted by the LSTM run
     # ------------------------------------------------------------------
     assert SCALER_PATH.exists(), (
         f"Scaler not found at {SCALER_PATH}. Run 01_run_lstm.py first."
@@ -352,14 +343,14 @@ def main(seed: int, device: str, mode: str = "dev") -> None:
     # ------------------------------------------------------------------
     print(f"\nRunning per-gauge inference...")
     for gauge_id, raw_df in gauge_dfs.items():
-        # Filter to model period, require both qobs and qglofas
+        # Filter to the full model period and require both qobs and qglofas
         g_df = raw_df[
             (raw_df["date"] >= SPLIT_DATES["val"][0])
             & (raw_df["date"] <= SPLIT_DATES["test"][1])
         ].dropna(subset=[TARGET, "qglofas"]).reset_index(drop=True)
 
-        # g_df uses original qobs from gauge_dfs (never mutated);
-        # the residual target was only set on per-gauge copies inside the training block
+        # gauge_dfs keeps the original qobs (never mutated); the residual target
+        # was only assigned to per-gauge copies used for training.
         if len(g_df) < seq_len:
             print(f"  {gauge_id}: skipped (only {len(g_df)} rows, need ≥ {seq_len})")
             continue

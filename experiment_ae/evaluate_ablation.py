@@ -2,8 +2,7 @@
 experiment_ae/evaluate_ablation.py
 
 Evaluate the input-feature ablation for both LSTM and Transformer and produce
-a 2x3 boxplot figure comparing NSE, PBIAS, and HFB (high-flow bias) across the
-15 Nepal basins.
+a 2x2 boxplot figure comparing NSE and PBIAS across the 15 Nepal basins.
 
 Default output uses seed 42. Predictions are read from
 experiment_ae/run_ablation.py (LSTM) and
@@ -13,7 +12,7 @@ experiment_ae/run_ablation_transformer.py (Transformer)'s seed42 output:
     output/predictions/transformer_dynamic/seed42/*.parquet
     output/predictions/transformer_static/seed42/*.parquet
 
-The "alphaearth" variant is not trained separately — it is identical to the
+The "alphaearth" variant is not trained separately: it is identical to the
 main pipeline's production lstm/transformer model (same features, same
 hyperparameters), so its numbers are read directly from the main pipeline's
 own seed42 output instead of a redundant re-run:
@@ -24,7 +23,7 @@ Outputs (default, seed 42):
     output/figures/fig_input_ablation_cdf.png
     output/figures/fig_input_ablation_cdf.svg
     output/metrics_input_ablation.parquet
-    Printed table of median NSE, KGE, RMSE, PBIAS, HFB per variant.
+    Printed table of median NSE, KGE, RMSE, PBIAS per variant.
 
 Pass --seed N to plot a different single seed instead (output goes to a
 _seedN-suffixed file). Pass --mean to plot the 5-seed mean instead (output
@@ -68,7 +67,7 @@ INPUT_VARIANTS = {
     "alphaearth": "Dynamic +\nAlphaEarth",
 }
 
-# Okabe-Ito palette — mirrors the model colors used in 07_evaluate.py
+# Okabe-Ito palette (matches the model colors used in 07_evaluate.py)
 COLORS = {
     "dynamic":    "#009E73",
     "static":     "#0072B2",
@@ -281,7 +280,6 @@ def print_summary(metrics_df: pd.DataFrame) -> None:
         .median()
         .round(3)
     )
-    # Sort by descending median NSE
     summary = summary.sort_values("nse", ascending=False)
     print(summary.to_string())
     best_nse = summary["nse"].idxmax()

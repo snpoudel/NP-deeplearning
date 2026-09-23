@@ -4,19 +4,19 @@ experiment_ae/run_ablation_transformer.py
 Input feature ablation experiment for Transformer.
 
 Trains two Transformer variants, each across every seed in the run mode's
-seed list (SEEDS[mode]), then averages predictions across seeds — mirroring
+seed list (SEEDS[mode]), then averages predictions across seeds, mirroring
 how the main pipeline (02_run_transformer.py + run_all.py) produces its
 seed-averaged result. Mirrors experiment_ae/run_ablation.py's LSTM ablation:
 
-  A) transformer_dynamic   — 2 features: temperature + precipitation
-  B) transformer_static    — 18 features: dynamic + existing 16 static attrs
+  A) transformer_dynamic (2 features: temperature + precipitation)
+  B) transformer_static  (18 features: dynamic + existing 16 static attrs)
 
-A third variant, "dynamic + AlphaEarth embeddings", is intentionally NOT
+A third variant, "dynamic + AlphaEarth embeddings", is intentionally not
 retrained here: it is feature-for-feature and hyperparameter-for-hyperparameter
 identical to the main pipeline's production `transformer` model (both train on
 ALL_FEATURES = DYNAMIC_FEATURES + AE_FEATURES). Retraining it separately would
-only add fresh GPU non-determinism noise without changing what it represents —
-this matters more for Transformer than LSTM, since Transformer training on GPU
+only add fresh GPU non-determinism noise without changing what it represents.
+This matters more for Transformer than LSTM, since Transformer training on GPU
 is not bit-reproducible run-to-run even with a fixed seed. So
 evaluate_ablation.py instead reuses the already seed-averaged
 output/predictions/transformer/*_mean.parquet produced by the main pipeline.
@@ -173,7 +173,7 @@ def train_variant(
 
     # -- Fit scaler on training data only -------------------------------------
     # Deterministic (StandardScaler has no randomness), so re-fitting per seed
-    # is harmless — every seed writes back the same values.
+    # is harmless: every seed writes back the same values.
     print("Fitting scaler...")
     scaler = fit_and_save_scaler(train_df, scaler_path, feature_cols=feature_cols)
 
@@ -347,10 +347,10 @@ def main(mode: str = "dev") -> None:
     base_gauge_dfs = load_gauge_dfs(INPUT_DIR)
     print(f"  {len(base_gauge_dfs)} gauges loaded")
 
-    # Define the two variants actually trained here.
-    # ("dynamic + AlphaEarth" is not retrained — see module docstring; it is
-    # identical to the main pipeline's production `transformer` model, so
-    # evaluate_ablation.py reuses output/predictions/transformer/*_mean.parquet.)
+    # Define the two variants actually trained here. "dynamic + AlphaEarth" is
+    # not retrained (see module docstring): it is identical to the main
+    # pipeline's production `transformer` model, so evaluate_ablation.py
+    # reuses output/predictions/transformer/*_mean.parquet.
     variants = {
         "transformer_dynamic": (DYNAMIC_FEATURES,                   base_gauge_dfs),
         "transformer_static":  (DYNAMIC_FEATURES + STATIC_FEATURES, base_gauge_dfs),

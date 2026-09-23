@@ -4,16 +4,16 @@ experiment_hp_tuning/run_tuning_transformer.py
 Hidden-size (d_model) hyperparameter tuning for Transformer.
 
 Trains three Transformer variants with seed=42, all using the AlphaEarth
-input variant (dynamic + AlphaEarth embeddings — the best input variant from
+input variant (dynamic + AlphaEarth embeddings, the best input variant from
 experiment_ae/), sweeping only d_model:
 
-  A) transformer_h64   — d_model=64
-  B) transformer_h128  — d_model=128
-  C) transformer_h256  — d_model=256
+  A) transformer_h64  (d_model=64)
+  B) transformer_h128 (d_model=128)
+  C) transformer_h256 (d_model=256)
 
 Every other hyperparameter (nhead, num_encoder_layers, dim_feedforward,
 dropout, learning rate, seq_len, batch_size, epochs, patience) stays at the
-production profile (shared/hyperparameters.py); nhead=8 divides all three
+production profile (shared/hyperparameters.py). nhead=8 divides all three
 candidate d_model values evenly. Predictions are saved in the same format as
 experiment_ae/run_ablation_transformer.py so evaluate_tuning.py can compare
 validation loss across variants.
