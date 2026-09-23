@@ -33,8 +33,6 @@ Production hidden size (`hidden_size=256` for LSTM, `d_model=128` for Transforme
 | Validation | 1980-1989 | Early stopping |
 | Test | 2005-2014 | Final evaluation (held out) |
 
-15 Nepal gauge basins.
-
 ## Repository structure
 
 ```
@@ -108,23 +106,4 @@ python experiment_ae/evaluate_ablation.py                           # fig_input_
 python experiment_hp_tuning/run_tuning_lstm.py --mode production
 python experiment_hp_tuning/run_tuning_transformer.py --mode production
 python experiment_hp_tuning/evaluate_tuning.py                      # fig_hp_tuning_val_loss.png
-```
-
-## Output structure
-
-```
-output/
-├── model/
-│   ├── scaler.pkl                                    # StandardScaler fitted on train split; shared by all 6 models
-│   ├── {model}_seed{N}_best.pt                       # best model weights per seed
-│   ├── {model}_seed{N}_loss_curves.parquet           # per-seed train/val loss history
-│   └── {model}_loss_curves.parquet                   # seed-averaged loss curves (fig8 input)
-├── predictions/
-│   ├── {model}/seed{N}/nepal_{id}_{model}.parquet    # per-seed predictions (date, qobs, qsim)
-│   └── {model}/nepal_{id}_{model}_mean.parquet       # seed-averaged predictions (07_evaluate.py input)
-├── training_times.csv             # one row per model: seeds_run, mean epochs, mean train time, mean best val loss
-├── metrics.parquet                # NSE/KGE/RMSE/PBIAS per model per gauge (test period only)
-├── metrics_input_ablation.parquet # per-gauge NSE/KGE/RMSE/PBIAS per experiment_ae/ variant
-├── metrics_hp_tuning.parquet      # best val loss, epochs, train time per experiment_hp_tuning/ variant
-└── figures/                       # fig1-fig9, fig_input_ablation_cdf, fig_hp_tuning_val_loss (PNG + SVG at 300 DPI)
 ```
